@@ -1,0 +1,36 @@
+<!-- Replace the src with your deployed public Streamlit app URL. -->
+<div class="market-lens-embed">
+  <iframe
+    src="https://YOUR-MARKET-LENS-APP.streamlit.app/?embed=true"
+    title="Market Lens stock research dashboard"
+    loading="lazy"
+    referrerpolicy="strict-origin-when-cross-origin"
+  ></iframe>
+</div>
+
+<style>
+  .market-lens-embed {
+    width: 100%;
+    min-height: 720px;
+    height: min(92vh, 1100px);
+    overflow: hidden;
+    border: 1px solid #26383a;
+    border-radius: 18px;
+    background: #0b1417;
+  }
+
+  .market-lens-embed iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+
+  @media (max-width: 700px) {
+    .market-lens-embed {
+      min-height: 82vh;
+      height: 88vh;
+      border-radius: 12px;
+    }
+  }
+</style>
