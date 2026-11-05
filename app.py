@@ -81,6 +81,11 @@ h1,h2,h3 { letter-spacing:-.04em !important; }
 .jujosmi-home-link { display:block; margin:0 0 18px; line-height:0; }
 .jujosmi-home-link img { display:block; width:min(100%,205px); max-height:62px; object-fit:contain; object-position:left center; }
 .hero { padding:10px 0 24px; }
+.quick-nav { display:flex; flex-wrap:wrap; gap:8px; margin:-8px 0 22px; }
+.quick-nav a { display:inline-flex; align-items:center; padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:color-mix(in srgb,var(--panel) 88%,transparent); color:var(--ink); font-size:12px; font-weight:700; text-decoration:none; transition:background .15s ease,border-color .15s ease,transform .15s ease; }
+.quick-nav a:hover { background:color-mix(in srgb,var(--mint) 14%,var(--panel)); border-color:var(--mint); transform:translateY(-1px); }
+.quick-nav a:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
+.section-anchor { height:1px; scroll-margin-top:18px; }
 .eyebrow { color:var(--muted); text-transform:uppercase; letter-spacing:.14em; font-size:10px; font-weight:700; }
 .hero h1 { font-size:42px; margin:4px 0 4px; }
 .snapshot-security { font-size:.56em; font-weight:600; color:var(--muted); letter-spacing:0; vertical-align:middle; white-space:normal; }
@@ -161,22 +166,22 @@ def load_profile(symbol: str) -> dict:
             "industry":info.get("industry") or "Unclassified"}
 
 
-def add_searched_ticker() -> None:
-    choice = st.session_state.get("ticker_suggestion")
-    symbol = st.session_state.get("ticker_suggestion_map", {}).get(choice)
-    if symbol:
-        add_symbol_to_watchlist(symbol)
-        st.session_state["ticker_search_query"] = ""
-
-
 def add_symbol_to_watchlist(symbol: str) -> None:
+    normalized = str(symbol).strip().upper()
     current = [part.strip().upper() for part in st.session_state.get("watchlist_input", "").split(",") if part.strip()]
-    if symbol and symbol not in current and len(current) < 8:
-        current.append(symbol)
+    if not normalized:
+        return
+    if normalized in current:
+        st.session_state["watchlist_action_notice"] = ("info", f"{normalized} is already in your watchlist.")
+    elif len(current) >= MAX_WATCHLIST_SIZE:
+        st.session_state["watchlist_action_notice"] = ("warning", f"Your watchlist is full ({MAX_WATCHLIST_SIZE} tickers). Remove a ticker to add another.")
+    else:
+        current.append(normalized)
         st.session_state["watchlist_input"] = ", ".join(current)
         save_user_watchlist(current)
-    if symbol in current:
-        st.session_state["focus_ticker"] = symbol
+        st.session_state["watchlist_action_notice"] = ("success", f"Added {normalized} to your watchlist.")
+    if normalized in current:
+        st.session_state["focus_ticker"] = normalized
 
 
 def select_industry(industry_key: str) -> None:
@@ -363,27 +368,39 @@ with st.sidebar:
     st.markdown("### Your watchlist")
     if "watchlist_input" not in st.session_state:
         st.session_state["watchlist_input"] = ", ".join(load_user_watchlist() or DEFAULT_WATCHLIST)
+    action_notice = st.session_state.pop("watchlist_action_notice", None)
+    if action_notice:
+        notice_type, notice_text = action_notice
+        getattr(st, notice_type)(notice_text)
     raw_symbols = st.text_input("Tickers", key="watchlist_input", on_change=persist_watchlist_input,
                                 help="Enter up to 8 symbols separated by commas.")
     symbols = list(dict.fromkeys(s.strip().upper() for s in raw_symbols.split(",") if s.strip()))[:MAX_WATCHLIST_SIZE]
     if not symbols:
         symbols = ["SPY"]
+    st.caption(f"{len(symbols)} of {MAX_WATCHLIST_SIZE} ticker slots used")
     query = st.text_input("Search ticker or company", key="ticker_search_query", placeholder="Type 2+ letters…")
     if len(query.strip()) >= 2:
         suggestions = search_tickers(query)
         if suggestions:
-            suggestion_map = {item["label"]:item["symbol"] for item in suggestions}
-            st.session_state["ticker_suggestion_map"] = suggestion_map
-            if st.session_state.get("ticker_suggestion") not in suggestion_map:
-                st.session_state["ticker_suggestion"] = next(iter(suggestion_map))
-            st.selectbox("Matches", list(suggestion_map), key="ticker_suggestion")
-            st.button("＋ Add selected ticker", on_click=add_searched_ticker, use_container_width=True)
+            st.caption("Choose a result to add it and focus the dashboard on that ticker.")
+            watchlist_full = len(symbols) >= MAX_WATCHLIST_SIZE
+            for suggestion in suggestions[:8]:
+                symbol = str(suggestion["symbol"]).strip().upper()
+                already_added = symbol in symbols
+                button_label = f"{'✓' if already_added else '＋'} {symbol} · {suggestion['name']}"
+                st.button(
+                    button_label, key=f"ticker_search_add_{symbol}",
+                    on_click=add_symbol_to_watchlist, args=(symbol,),
+                    disabled=already_added or watchlist_full, use_container_width=True,
+                )
+            if watchlist_full:
+                st.caption("Your watchlist is full. Remove a ticker above to make room.")
         else:
             st.caption("No ticker matches found. You can still enter a symbol above.")
     focused = st.session_state.get("focus_ticker")
     if focused not in symbols:
         st.session_state["focus_ticker"] = symbols[0]
-    selected = st.selectbox("Focus ticker", symbols, key="focus_ticker")
+    selected = st.selectbox("Ticker to analyze", symbols, key="focus_ticker")
     st.markdown("---")
     st.markdown('<div class="smallcaps">Signal guide</div>', unsafe_allow_html=True)
     st.caption("Search by ticker or company name to add symbols. Buy / Hold / Sell is a rule-based technical screen, not personalized advice. Expected move is a volatility range, not a directional price target.")
@@ -396,6 +413,7 @@ with st.sidebar:
         st.caption("Hosted mode: your watchlist stays in this browser session and is not shared with other visitors.")
 
 st.markdown('<div class="hero"><div class="eyebrow">Markets, in focus</div><h1>Market Lens</h1><div class="sub">A calm, evidence-led view of price action, volatility and the headlines moving your watchlist.</div></div>', unsafe_allow_html=True)
+st.markdown('<nav class="quick-nav" aria-label="Jump to a dashboard section"><a href="#market-pulse">Market pulse</a><a href="#discovery-index">Discovery</a><a href="#selected-ticker">Ticker snapshot</a><a href="#technical-analysis">Analysis</a><a href="#headlines">Headlines</a><a href="#watchlist-snapshot">Watchlist</a></nav>', unsafe_allow_html=True)
 
 try:
     with st.spinner(f"Researching {selected} and the broader market…"):
@@ -419,6 +437,7 @@ with st.container(border=True):
     for warning in payload.get("optional_warnings", []):
         st.warning(warning)
     
+st.markdown('<div id="market-pulse" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     st.markdown("## Market pulse")
     st.markdown("### Index performance")
@@ -487,6 +506,7 @@ with st.container(border=True):
     st.caption("VIX reflects options-implied, non-directional 30-day S&P 500 volatility, not a forecast of whether the market will rise or fall. Its calm / moderate / elevated labels are rough display bands. [Cboe methodology](https://www.cboe.com/tradable_products/vix/faqs)")
     
     st.write("")
+st.markdown('<div id="discovery-index" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     st.markdown("## Discovery index")
     st.markdown('<div class="sub">Browse the market by industry and keep an eye on upcoming company and market events.</div>', unsafe_allow_html=True)
@@ -602,6 +622,7 @@ with st.container(border=True):
             st.info(f"No other events were returned for the next {event_window} days.")
         st.caption("Event coverage varies by market and issuer. Dates are provided by Yahoo Finance and may be incomplete.")
     
+st.markdown('<div id="selected-ticker" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     snapshot_symbol = html.escape(selected)
     snapshot_company = html.escape(stats.get("name") or selected)
@@ -659,6 +680,7 @@ with st.container(border=True):
         st.markdown("</div>", unsafe_allow_html=True)
     
     st.write("")
+st.markdown('<div id="technical-analysis" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     st.markdown("## Research desk")
     st.markdown('<div class="sub">Price structure, business quality, expectations, catalysts, and primary-source filings in one view.</div>', unsafe_allow_html=True)
@@ -788,6 +810,7 @@ with st.container(border=True):
         st.caption("Analyst targets are third-party opinions, not price forecasts. Confirm dates and figures against original company releases and filings.")
     
     st.write("")
+st.markdown('<div id="headlines" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     st.markdown("## Headlines & sentiment")
     st.markdown('<div class="sub">Financial phrases, weighted polarity terms and negation checks drive each Bullish / Bearish tag. Low signal means the headline gives limited directional evidence.</div>', unsafe_allow_html=True)
@@ -829,6 +852,7 @@ with st.container(border=True):
             st.markdown(f'<div class="news-row"><a class="news-title" href="{safe_link}" target="_blank" rel="noopener noreferrer">{html.escape(title)}</a><div class="news-meta">{html.escape(publisher)} &nbsp;·&nbsp; {html.escape(date)} &nbsp;·&nbsp; {html.escape(topic)} &nbsp;·&nbsp; <span class="pill {badge}">{label.upper()}</span> &nbsp; <span class="pill {confidence_badge}">{confidence.upper()} SIGNAL</span><br>{html.escape(reason)}</div></div>', unsafe_allow_html=True)
     
     st.write("")
+st.markdown('<div id="watchlist-snapshot" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     st.markdown("## Watchlist snapshot")
     rows = []
