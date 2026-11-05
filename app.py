@@ -544,8 +544,13 @@ with st.container(border=True):
             if companies.empty:
                 st.caption("No company listing was returned for this industry.")
             else:
-                st.dataframe(companies, use_container_width=True)
-                st.caption("Industry listings show Yahoo Finance’s top companies for the selected category, not a complete exchange-wide security master.")
+                company_display = companies.copy()
+                provider_rating_column = next((column for column in company_display.columns
+                                               if str(column).strip().casefold() == "rating"), None)
+                if provider_rating_column is not None:
+                    company_display = company_display.rename(columns={provider_rating_column:"Analyst rating"})
+                st.dataframe(company_display, use_container_width=True)
+                st.caption("Industry listings show Yahoo Finance’s top companies, not a complete exchange-wide security master. The Analyst rating column is provider-reported analyst consensus; it can say Buy while Market Lens’ technical signal says Sell because they measure different things.")
                 company_frame = companies.reset_index()
                 symbol_column = next((col for col in company_frame.columns if str(col).lower() in ("symbol", "ticker")), None)
                 name_column = next((col for col in company_frame.columns if str(col).lower() in ("name", "company", "shortname")), None)
@@ -683,9 +688,9 @@ with st.container(border=True):
             risks = stats["caution_checks"]
             rating_coverage = "all required checks available" if stats["rating_checks_complete"] else "missing inputs prevent a rating"
             st.markdown(f"**Screening label: {stats['rating']}** · {positives} constructive checks vs {risks} caution checks · {rating_coverage}.")
-            st.caption("Buy / Hold / Sell is a rule-based technical screening label: Buy when constructive checks exceed caution checks by 2+, Sell when caution checks exceed by 2+, otherwise Hold. Checks are equally weighted and do not account for your goals, portfolio or risk tolerance. RSI and moving-average signals can lag or whipsaw; this is not personalized investment advice.")
+            st.caption("Market Lens Buy / Hold / Sell is a technical screen, separate from analyst consensus. Buy means at least 2 more constructive than caution checks; Sell means at least 2 more caution than constructive; Hold means the counts are within 1. All 10 checks must be available. It is not a forecast or a personal instruction to trade.")
             with st.expander("See the rating checks"):
-                st.markdown("**Constructive:** price above 50 day average; 50 day above 200 day; MACD above signal; 3 month excess return versus SPY positive; RSI between 50 and 70.\n\n**Caution:** price below 200 day average; MACD below signal; 3 month excess return versus SPY negative; RSI at or above 70; current drawdown at least 20% below its 52 week high.")
+                st.markdown("**Buy:** net score +2 or higher (constructive checks minus caution checks). **Hold:** net score −1, 0, or +1. **Sell:** net score −2 or lower. Each check has equal weight; a missing input makes the signal unavailable.\n\n**Constructive checks:** price above the 50-day average; 50-day average above the 200-day average; MACD above its signal line; positive 3-month excess return versus SPY; RSI from 50 up to, but not including, 70.\n\n**Caution checks:** price below the 200-day average; MACD below its signal line; negative 3-month excess return versus SPY; RSI at or above 70; current price at least 20% below its 52-week high. An analyst Buy / Strong Buy can coexist with a Market Lens Sell because analyst consensus and this historical technical screen use different inputs and time horizons.")
     with tab_fundamentals:
         st.markdown("#### Business profile & valuation")
         st.caption(f"{info.get('sector') or 'Sector unavailable'} · {info.get('industry') or 'Industry unavailable'} · {info.get('fullTimeEmployees') or '—':,} employees" if isinstance(info.get('fullTimeEmployees'), (int,float)) else f"{info.get('sector') or 'Sector unavailable'} · {info.get('industry') or 'Industry unavailable'}")

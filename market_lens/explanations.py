@@ -6,31 +6,38 @@ import numpy as np
 
 
 def rating_explanation(stats: dict) -> str:
-    """Explain the rating while tolerating older cached calculation results."""
+    """Explain the technical rating, its threshold, and its difference from consensus."""
     checks = stats.get("rating_check_details")
-    if not checks:
-        net = stats.get("constructive_checks", 0) - stats.get("caution_checks", 0)
-        checks_complete = stats.get("rating_checks_complete", stats.get("rating") != "Unavailable")
-        if not checks_complete:
-            return ("No rating is shown because one or more required indicators are unavailable. "
-                    "The screen needs full trend, momentum, relative-return and drawdown inputs.")
-        return (f"{stats.get('rating', 'Unavailable')} uses five equally weighted constructive and five caution checks. "
-                f"Current counts are {stats.get('constructive_checks', 0)} constructive and "
-                f"{stats.get('caution_checks', 0)} caution (net {net:+d}); a difference of +2 gives Buy, "
-                "−2 gives Sell, otherwise Hold. This is a technical screen, not a forecast.")
-    missing = [check["label"] for check in checks if check["passed"] is None]
-    if not stats.get("rating_checks_complete", False):
-        sample = "; ".join(missing[:3])
-        more = "…" if len(missing) > 3 else ""
-        return (f"No rating is shown because {len(missing)} of the 10 checks are unavailable: "
-                f"{sample}{more}. A check needs its full history window.")
-    passed = [check["label"] for check in checks if check["passed"] is True]
-    net = stats["constructive_checks"] - stats["caution_checks"]
+    constructive = int(stats.get("constructive_checks", 0))
+    caution = int(stats.get("caution_checks", 0))
+    net = constructive - caution
+    checks_complete = stats.get("rating_checks_complete", stats.get("rating") != "Unavailable")
+    if checks and not checks_complete:
+        missing = [check["label"] for check in checks if check["passed"] is None]
+        sample = "; ".join(missing[:2])
+        more = "…" if len(missing) > 2 else ""
+        return (f"No Market Lens signal is shown because {len(missing)} of 10 technical checks are unavailable: "
+                f"{sample}{more}. The screen requires complete 50/200-day trend, MACD, 3-month relative-return, "
+                "RSI, and 52-week drawdown inputs. Analyst consensus is a separate measure.")
+    if not checks_complete:
+        return ("No Market Lens signal is shown because one or more full technical-history inputs are unavailable. "
+                "The analyst consensus rating, if shown elsewhere, is a separate measure.")
+
+    positives = [check["label"] for check in checks or []
+                 if check.get("side") == "Constructive" and check.get("passed") is True]
+    cautions = [check["label"] for check in checks or []
+                if check.get("side") == "Caution" and check.get("passed") is True]
     threshold = "Buy" if net >= 2 else "Sell" if net <= -2 else "Hold"
-    supporting = "; ".join(passed[:3]) if passed else "no directional checks passed"
-    return (f"{stats['rating']} because {stats['constructive_checks']} constructive checks minus "
-            f"{stats['caution_checks']} caution checks gives {net:+d} (rule result: {threshold}). "
-            f"Signals: {supporting}. Checks are equally weighted and are not a forecast.")
+    details = []
+    if positives:
+        details.append("constructive: " + "; ".join(positives[:2]) + ("; …" if len(positives) > 2 else ""))
+    if cautions:
+        details.append("caution: " + "; ".join(cautions[:2]) + ("; …" if len(cautions) > 2 else ""))
+    signals = " Passed checks: " + " | ".join(details) + "." if details else " No directional checks passed."
+    rating = stats.get("rating", threshold)
+    return (f"{rating} is Market Lens's technical screen: {constructive}/5 constructive minus {caution}/5 caution "
+            f"checks = {net:+d}. Buy requires +2 or more; Sell requires −2 or less; Hold is −1 to +1. "
+            f"All 10 checks must be available. Analyst consensus may differ.{signals} This is a screening label, not a trade recommendation.")
 
 
 def trend_explanation(stats: dict) -> str:
