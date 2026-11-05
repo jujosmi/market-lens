@@ -83,6 +83,7 @@ h1,h2,h3 { letter-spacing:-.04em !important; }
 .hero { padding:10px 0 24px; }
 .eyebrow { color:var(--muted); text-transform:uppercase; letter-spacing:.14em; font-size:10px; font-weight:700; }
 .hero h1 { font-size:42px; margin:4px 0 4px; }
+.snapshot-security { font-size:.56em; font-weight:600; color:var(--muted); letter-spacing:0; vertical-align:middle; white-space:normal; }
 .sub { color:var(--muted); font-size:14px; }
 .panel { background:linear-gradient(145deg,color-mix(in srgb,var(--panel) 96%,var(--mint) 4%),var(--panel)); border:1px solid var(--line); border-radius:18px; padding:20px 22px; height:100%; }
 .metric-label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; }
@@ -602,7 +603,9 @@ with st.container(border=True):
         st.caption("Event coverage varies by market and issuer. Dates are provided by Yahoo Finance and may be incomplete.")
     
 with st.container(border=True):
-    st.markdown("## Selected ticker snapshot")
+    snapshot_symbol = html.escape(selected)
+    snapshot_company = html.escape(stats.get("name") or selected)
+    st.markdown(f'## Selected ticker snapshot <span class="snapshot-security">({snapshot_symbol} · {snapshot_company})</span>', unsafe_allow_html=True)
     cols = st.columns(4)
     move_explanation = ("A one-standard-deviation 30-day range from " + stats["move_source"] + ". This describes possible variability, not whether price is expected to rise or fall.")
     trend_note = f"RSI {stats['rsi']:.0f} · 20d / 50d / 200d trend" if np.isfinite(stats['rsi']) else "RSI unavailable · trend windows require full history"
