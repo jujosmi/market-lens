@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root { color-scheme: dark; font-family: Manrope, Segoe UI, sans-serif; --ink:#edf4f2; --muted:#90aaa5; --background:#0b1417; --surface:#111d20; --line:#26383a; --accent:#76e0b2; --button-text:#0c1718; }
+    * { box-sizing: border-box; }
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; background:transparent; }
+    #root { position:relative; width:100%; height:100%; color:var(--ink); }
+    #launcher { position:absolute; right:0; bottom:0; width:58px; height:58px; border:1px solid var(--accent); border-radius:50%; background:color-mix(in srgb,var(--surface) 88%,var(--accent) 12%); color:var(--accent); font-size:24px; box-shadow:0 8px 28px #0003; cursor:pointer; }
+    #panel { position:absolute; right:0; bottom:0; width:min(390px, calc(100vw - 16px)); height:570px; max-height:calc(100vh - 20px); display:flex; flex-direction:column; border:1px solid var(--line); border-radius:18px; background:var(--surface); box-shadow:0 16px 50px #0003; overflow:hidden; }
+    #panel[hidden], #launcher[hidden] { display:none; }
+    #drag-handle { display:flex; align-items:center; justify-content:space-between; min-height:52px; padding:0 14px; background:linear-gradient(110deg,color-mix(in srgb,var(--accent) 13%,var(--surface)),var(--surface)); border-bottom:1px solid var(--line); cursor:grab; user-select:none; touch-action:none; }
+    #drag-handle:active { cursor:grabbing; }
+    .brand { font-weight:800; letter-spacing:.02em; font-size:13px; }
+    .tagline { color:var(--muted); font-size:10px; margin-top:3px; }
+    .actions { display:flex; gap:7px; }
+    .icon-button { width:28px; height:28px; border:1px solid var(--line); border-radius:8px; background:var(--background); color:var(--ink); cursor:pointer; }
+    #notice { padding:8px 13px; color:var(--muted); font-size:10px; line-height:1.4; background:color-mix(in srgb,var(--surface) 78%,var(--background)); border-bottom:1px solid var(--line); }
+    #messages { flex:1; min-height:0; padding:13px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+    .message { max-width:91%; padding:10px 11px; border-radius:12px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.5; }
+    .user { align-self:flex-end; background:color-mix(in srgb,var(--accent) 18%,var(--surface)); color:var(--ink); border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line)); }
+    .assistant { align-self:flex-start; background:var(--background); color:var(--ink); border:1px solid var(--line); }
+    .welcome { color:var(--muted); padding:5px 2px; font-size:12px; line-height:1.55; }
+    #composer { border-top:1px solid var(--line); padding:11px; display:flex; gap:8px; background:var(--surface); }
+    #question { flex:1; min-width:0; max-height:100px; resize:none; color:var(--ink); background:var(--background); border:1px solid var(--line); border-radius:10px; padding:10px; font:12px Manrope, Segoe UI, sans-serif; outline:none; }
+    #question:focus { border-color:var(--accent); }
+    #send { border:0; border-radius:10px; padding:0 14px; color:var(--button-text); background:var(--accent); font-weight:800; cursor:pointer; }
+    #send:disabled { opacity:.5; cursor:wait; }
+    @media (max-width:480px) { #panel { width:calc(100vw - 12px); height:min(570px, calc(100vh - 18px)); } }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <button id="launcher" type="button" aria-label="Open Market Lens terminology assistant" title="Ask a market terminology question">◉</button>
+    <section id="panel" aria-label="Market Lens terminology assistant" hidden>
+      <header id="drag-handle">
+        <div><div class="brand">Market Lens · Learn</div><div class="tagline">A plain-English markets terminology helper</div></div>
+        <div class="actions"><button class="icon-button" id="minimize" type="button" aria-label="Minimize chat">—</button></div>
+      </header>
+      <div id="notice"></div>
+      <div id="messages" aria-live="polite"><div class="welcome">Ask about a term like RSI, beta, implied volatility, P/E, drawdown, or bid/ask spread.</div></div>
+      <form id="composer">
+        <textarea id="question" rows="2" maxlength="1800" placeholder="Ask about a market term…" aria-label="Your question"></textarea>
+        <button id="send" type="submit">Ask</button>
+      </form>
+    </section>
+  </div>
+  <script>
+    const ROOT = document.getElementById("root");
+    const LAUNCHER = document.getElementById("launcher");
+    const PANEL = document.getElementById("panel");
+    const MESSAGES = document.getElementById("messages");
+    const QUESTION = document.getElementById("question");
+    const SEND = document.getElementById("send");
+    const NOTICE = document.getElementById("notice");
+    let isOpen = false;
+    let lastRendered = "";
+    let lastReportedTheme = "";
+    let dragStart = null;
+
+    function newEventId() {
+      return window.crypto && typeof window.crypto.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    function sendToHost(type, data = {}) {
+      window.parent.postMessage(Object.assign({isStreamlitMessage:true, type}, data), "*");
+    }
+    function setHeight() {
+      const height = isOpen ? Math.min(590, Math.max(340, window.innerHeight - 20)) : 66;
+      sendToHost("streamlit:setFrameHeight", {height});
+    }
+    function applyTheme(theme) {
+      if (!theme) return;
+      const light = theme.base === "light";
+      const styles = {
+        "--ink": theme.textColor || (light ? "#17312b" : "#edf4f2"),
+        "--muted": light ? "#61756f" : "#91a6a3",
+        "--background": theme.backgroundColor || (light ? "#f3f7f5" : "#0b1417"),
+        "--surface": theme.secondaryBackgroundColor || (light ? "#ffffff" : "#111d20"),
+        "--line": light ? "#dce7e2" : "#26383a",
+        "--accent": theme.primaryColor || (light ? "#087f63" : "#76e0b2"),
+        "--button-text": light ? "#ffffff" : "#0c1718"
+      };
+      for (const [name, value] of Object.entries(styles)) document.documentElement.style.setProperty(name, value);
+      document.documentElement.style.colorScheme = light ? "light" : "dark";
+      if ((theme.base === "light" || theme.base === "dark") && theme.base !== lastReportedTheme) {
+        lastReportedTheme = theme.base;
+        sendToHost("streamlit:setComponentValue", {
+          value:{action:"theme", event_id:`theme-${theme.base}`, theme_type:theme.base}
+        });
+      }
+    }
+    function showMessages(items) {
+      const fingerprint = JSON.stringify(items || []);
+      if (fingerprint === lastRendered) return;
+      lastRendered = fingerprint;
+      MESSAGES.replaceChildren();
+      if (!items || !items.length) {
+        const welcome = document.createElement("div");
+        welcome.className = "welcome";
+        welcome.textContent = "Ask about a term like RSI, beta, implied volatility, P/E, drawdown, or bid/ask spread.";
+        MESSAGES.appendChild(welcome);
+      } else {
+        for (const item of items) {
+          const bubble = document.createElement("div");
+          bubble.className = `message ${item.role === "user" ? "user" : "assistant"}`;
+          bubble.textContent = item.content || "";
+          MESSAGES.appendChild(bubble);
+        }
+      }
+      MESSAGES.scrollTop = MESSAGES.scrollHeight;
+    }
+    function openChat() {
+      isOpen = true;
+      PANEL.hidden = false;
+      LAUNCHER.hidden = true;
+      setHeight();
+      setTimeout(() => QUESTION.focus(), 30);
+    }
+    function closeChat() {
+      isOpen = false;
+      PANEL.hidden = true;
+      LAUNCHER.hidden = false;
+      PANEL.style.transform = "";
+      setHeight();
+    }
+    LAUNCHER.addEventListener("click", openChat);
+    document.getElementById("minimize").addEventListener("click", closeChat);
+    document.getElementById("composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = QUESTION.value.trim();
+      if (!text) return;
+      SEND.disabled = true;
+      sendToHost("streamlit:setComponentValue", {value:{action:"send", event_id:newEventId(), text}});
+      QUESTION.value = "";
+    });
+    QUESTION.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        document.getElementById("composer").requestSubmit();
+      }
+    });
+
+    const HANDLE = document.getElementById("drag-handle");
+    HANDLE.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button")) return;
+      const frame = window.frameElement;
+      const rect = frame ? frame.getBoundingClientRect() : {left:window.innerWidth - 400, top:window.innerHeight - 590};
+      dragStart = {pointerX:event.clientX, pointerY:event.clientY, left:rect.left, top:rect.top};
+      HANDLE.setPointerCapture(event.pointerId);
+    });
+    HANDLE.addEventListener("pointermove", (event) => {
+      if (!dragStart || event.buttons === 0) return;
+      const dx = event.clientX - dragStart.pointerX;
+      const dy = event.clientY - dragStart.pointerY;
+      PANEL.style.transform = `translate(${dx}px, ${dy}px)`;
+    });
+    HANDLE.addEventListener("pointerup", (event) => {
+      if (!dragStart) return;
+      const moved = Math.abs(event.clientX - dragStart.pointerX) + Math.abs(event.clientY - dragStart.pointerY) > 8;
+      if (moved) {
+        let parentWidth = window.innerWidth;
+        let parentHeight = window.innerHeight;
+        try {
+          parentWidth = window.parent.innerWidth || parentWidth;
+          parentHeight = window.parent.innerHeight || parentHeight;
+        } catch (_) { /* The component still drags within its own viewport. */ }
+        const x = Math.max(6, Math.min(parentWidth - 400, dragStart.left + event.clientX - dragStart.pointerX));
+        const y = Math.max(6, Math.min(parentHeight - (isOpen ? 590 : 66), dragStart.top + event.clientY - dragStart.pointerY));
+        PANEL.style.transform = "";
+        sendToHost("streamlit:setComponentValue", {value:{action:"move", event_id:newEventId(), x, y}});
+      }
+      dragStart = null;
+    });
+
+    window.addEventListener("message", (event) => {
+      if (!event.data || event.data.type !== "streamlit:render") return;
+      const args = event.data.args || {};
+      applyTheme(event.data.theme);
+      showMessages(args.messages || []);
+      NOTICE.textContent = args.ai_enabled
+        ? "AI replies use OpenAI and may incur API charges. Questions and recent chat are sent for processing; no watchlist or quote data is sent automatically. Educational use only."
+        : "AI is not configured. Common terms use the built-in offline glossary; add an API key for open-ended questions.";
+      SEND.disabled = false;
+      setHeight();
+    });
+    sendToHost("streamlit:componentReady", {apiVersion:1});
+    setHeight();
+  </script>
+</body>
+</html>
