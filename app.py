@@ -178,6 +178,11 @@ def add_symbol_to_watchlist(symbol: str) -> None:
         st.session_state["focus_ticker"] = symbol
 
 
+def select_industry(industry_key: str) -> None:
+    """Persist an industry button selection so the directory reruns on that industry."""
+    st.session_state["industry_directory_selection"] = industry_key
+
+
 def persist_watchlist_input() -> None:
     symbols = [part.strip().upper() for part in st.session_state.get("watchlist_input", "").split(",") if part.strip()]
     save_user_watchlist(symbols[:MAX_WATCHLIST_SIZE])
@@ -497,10 +502,44 @@ with st.container(border=True):
             st.info("Industry directory data is temporarily unavailable. Use ticker search or the watchlist industry filter in the meantime.")
         else:
             industry_index = industry_index.sort_values(["sector", "industry"])
-            industry_options = {f"{row.industry} · {row.sector}":row.industry_key for row in industry_index.itertuples()}
-            industry_label = st.selectbox("Search or choose an industry", list(industry_options), key="industry_directory_selection", help="Type in this selector to filter the full Yahoo Finance industry index.")
-            industry_key = industry_options[industry_label]
-            with st.spinner(f"Loading companies in {industry_label.split(' · ')[0]}…"):
+            industry_options = [
+                {"label":f"{row.industry} · {row.sector}", "industry":str(row.industry),
+                 "sector":str(row.sector), "key":str(row.industry_key)}
+                for row in industry_index.itertuples()
+            ]
+            search_query = st.text_input(
+                "Find an industry", key="industry_directory_search",
+                placeholder="Search industries or sectors…",
+                help="Search is separate from the scrollable industry button list below.",
+            ).strip().casefold()
+            visible_industries = [
+                option for option in industry_options
+                if not search_query or search_query in option["label"].casefold()
+            ]
+            available_keys = {option["key"] for option in industry_options}
+            industry_key = st.session_state.get("industry_directory_selection")
+            if industry_key not in available_keys:
+                industry_key = industry_options[0]["key"]
+                st.session_state["industry_directory_selection"] = industry_key
+            st.caption(f"{len(visible_industries)} industries match · choose one to update the directory")
+            if visible_industries:
+                with st.container(height=300, border=True):
+                    industry_columns = st.columns(3)
+                    for index, option in enumerate(visible_industries):
+                        with industry_columns[index % len(industry_columns)]:
+                            st.button(
+                                option["label"], key=f"industry_pick_{option['key']}",
+                                type="primary" if option["key"] == industry_key else "secondary",
+                                use_container_width=True, on_click=select_industry,
+                                args=(option["key"],),
+                            )
+            else:
+                st.info("No industries match that search. Try a different industry or sector name.")
+
+            selected_option = next(option for option in industry_options if option["key"] == industry_key)
+            industry_label = selected_option["label"]
+            st.markdown(f"**Selected industry:** {industry_label}")
+            with st.spinner(f"Loading companies in {selected_option['industry']}…"):
                 companies = load_industry_companies(industry_key)
             if companies.empty:
                 st.caption("No company listing was returned for this industry.")
@@ -511,16 +550,25 @@ with st.container(border=True):
                 symbol_column = next((col for col in company_frame.columns if str(col).lower() in ("symbol", "ticker")), None)
                 name_column = next((col for col in company_frame.columns if str(col).lower() in ("name", "company", "shortname")), None)
                 if symbol_column:
-                    company_options = {}
+                    company_rows = []
                     for _, row in company_frame.iterrows():
-                        symbol = str(row[symbol_column])
-                        name = str(row[name_column]) if name_column else symbol
-                        company_options[f"{symbol} · {name}"] = symbol
-                    st.session_state["industry_company_map"] = company_options
-                    if company_options:
-                        company_choice = st.selectbox("Choose a company to add", list(company_options), key="industry_company_choice")
-                        st.button("＋ Add company to watchlist", on_click=add_symbol_to_watchlist,
-                                  args=(company_options[company_choice],), key="add_industry_company")
+                        symbol = str(row[symbol_column]).strip()
+                        if not symbol or symbol.casefold() == "nan":
+                            continue
+                        name = str(row[name_column]).strip() if name_column else symbol
+                        company_rows.append((symbol, name if name and name.casefold() != "nan" else symbol))
+                    if company_rows:
+                        st.markdown("**Add a company to your watchlist**")
+                        with st.container(height=260, border=True):
+                            company_columns = st.columns(2)
+                            for index, (symbol, name) in enumerate(company_rows):
+                                with company_columns[index % len(company_columns)]:
+                                    st.button(
+                                        f"＋ {symbol} · {name}",
+                                        key=f"industry_company_add_{industry_key}_{symbol}",
+                                        use_container_width=True, on_click=add_symbol_to_watchlist,
+                                        args=(symbol,),
+                                    )
     with earnings_tab:
         earnings = upcoming_events.get("Earnings", pd.DataFrame())
         if earnings.empty:
