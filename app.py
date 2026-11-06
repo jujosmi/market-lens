@@ -514,7 +514,7 @@ with st.sidebar:
         st.caption("Hosted mode: your watchlist stays in this browser session and is not shared with other visitors.")
 
 st.markdown('<div class="hero"><div class="eyebrow">Markets, in focus</div><h1>Market Lens</h1><div class="sub">A calm, evidence-led view of price action, volatility and the headlines moving your watchlist.</div></div>', unsafe_allow_html=True)
-st.markdown('<nav class="quick-nav" aria-label="Jump to a dashboard section"><a href="#market-pulse">Market pulse</a><a href="#discovery-index">Discovery</a><a href="#selected-ticker">Ticker snapshot</a><a href="#technical-analysis">Analysis</a><a href="#headlines">Headlines</a><a href="#watchlist-snapshot">Watchlist</a></nav>', unsafe_allow_html=True)
+st.markdown('<nav class="quick-nav" aria-label="Jump to a dashboard section"><a href="#selected-ticker">Ticker snapshot</a><a href="#discovery-index">Discovery</a><a href="#market-pulse">Market pulse</a><a href="#technical-analysis">Analysis</a><a href="#headlines">Headlines</a><a href="#watchlist-snapshot">Watchlist</a></nav>', unsafe_allow_html=True)
 
 try:
     with st.spinner(f"Researching {selected} and the broader market…"):
@@ -541,73 +541,62 @@ with st.container(border=True):
     for warning in payload.get("optional_warnings", []):
         st.warning(warning)
     
-st.markdown('<div id="market-pulse" class="section-anchor"></div>', unsafe_allow_html=True)
+st.markdown('<div id="selected-ticker" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
-    st.markdown("## Market pulse")
-    st.markdown("### Index performance")
-    context_meta = context.get("_metadata", {})
-    status_counts = pd.Series([meta.status for meta in context_meta.values()]).value_counts().to_dict() if context_meta else {}
-    st.caption(f"Broad-market source: Yahoo Finance via yfinance · retrieved {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} · daily interval · quality statuses: {status_counts or 'unavailable'} · quote delay is not verified by this provider")
-    benchmarks = []
-    for symbol, label in (("SPY","S&P 500"),("QQQ","Nasdaq 100"),("IWM","Small caps"),("DIA","Dow")):
-        frame = context.get(symbol)
-        if frame is not None and not frame.empty:
-            price = frame["Close"].dropna()
-            day_move = float(price.iloc[-1]) / float(price.iloc[-2]) - 1 if len(price) >= 2 else np.nan
-            month_move = float(price.iloc[-1]) / float(price.iloc[-22]) - 1 if len(price) >= 22 else np.nan
-            above_50 = float(price.iloc[-1]) > float(price.tail(50).mean()) if len(price) >= 50 else np.nan
-            metadata = context_meta.get(symbol)
-            benchmarks.append({"Market":label,"Ticker":symbol,"Last":float(price.iloc[-1]),"Day":day_move,"1 month":month_move,"Above 50d":above_50,
-                               "As of":pd.Timestamp(price.index[-1]).strftime("%Y-%m-%d"),
-                               "Data status":metadata.status if metadata else "unknown"})
-    vix_frame = context.get("^VIX")
-    vix_level = float(vix_frame["Close"].dropna().iloc[-1]) if vix_frame is not None and not vix_frame.empty else np.nan
-    spy_frame = context.get("SPY")
-    spy_trend = "unclear"
-    if spy_frame is not None and len(spy_frame) >= 200:
-        spy_close = spy_frame["Close"].dropna()
-        spy_last = float(spy_close.iloc[-1]); spy50 = float(spy_close.tail(50).mean()); spy200 = float(spy_close.tail(200).mean())
-        spy_trend = "above 50d and 200d averages; 50d above 200d" if spy_last > spy50 > spy200 else "below 50d and 200d averages; 50d below 200d" if spy_last < spy50 < spy200 else "mixed moving-average alignment"
-    elif spy_frame is not None:
-        spy_trend = "insufficient history for 200d trend"
-    sector_rows = []
-    spy1m = np.nan; spy3m = np.nan
-    if spy_frame is not None and len(spy_frame) >= 64:
-        _spyclose = spy_frame["Close"].dropna()
-        spy1m = float(_spyclose.iloc[-1]) / float(_spyclose.iloc[-22]) - 1
-        spy3m = float(_spyclose.iloc[-1]) / float(_spyclose.iloc[-64]) - 1
-    for sector, symbol in SECTORS.items():
-        frame = context.get(symbol)
-        if frame is not None and len(frame) >= 64:
-            close = frame["Close"].dropna()
-            perf1m = float(close.iloc[-1]) / float(close.iloc[-22]) - 1
-            perf3m = float(close.iloc[-1]) / float(close.iloc[-64]) - 1
-            metadata = context_meta.get(symbol)
-            sector_rows.append({"Sector":sector,"ETF":symbol,"1 month":perf1m,"vs S&P 1m":perf1m-spy1m if np.isfinite(spy1m) else np.nan,"3 months":perf3m,"vs S&P 3m":perf3m-spy3m if np.isfinite(spy3m) else np.nan,"Above 50d":float(close.iloc[-1]) > float(close.tail(50).mean()),"As of":pd.Timestamp(close.index[-1]).strftime("%Y-%m-%d"),"Data status":metadata.status if metadata else "unknown"})
-    sector_rows.sort(key=lambda x:x["vs S&P 1m"] if np.isfinite(x["vs S&P 1m"]) else -999, reverse=True)
-    pos_breadth = sum(1 for row in sector_rows if row["1 month"] > 0)
-    mc1, mc2 = st.columns([1, 2])
-    with mc1:
-        vix_text = f"{vix_level:.1f}" if np.isfinite(vix_level) else "Unavailable"
-        vix_label = "elevated" if np.isfinite(vix_level) and vix_level >= 25 else "moderate" if np.isfinite(vix_level) and vix_level >= 18 else "calm" if np.isfinite(vix_level) else "—"
-        tnx_frame = context.get("^TNX")
-        yield10 = float(tnx_frame["Close"].dropna().iloc[-1]) if tnx_frame is not None and not tnx_frame.empty else np.nan
-        yield_text = f"{yield10:.2f}%" if np.isfinite(yield10) else "—"
-        vix_meta, tnx_meta = context_meta.get("^VIX"), context_meta.get("^TNX")
-        vix_asof = pd.Timestamp(vix_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if vix_frame is not None and not vix_frame.empty else "unavailable"
-        tnx_asof = pd.Timestamp(tnx_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if tnx_frame is not None and not tnx_frame.empty else "unavailable"
-        vix_status = vix_meta.status if vix_meta else "unknown"
-        tnx_status = tnx_meta.status if tnx_meta else "unknown"
-        st.markdown(f'<div class="panel"><div class="smallcaps">Regime & volatility</div><div class="metric-value">{vix_text} <span style="font:500 14px Manrope;color:var(--muted)">VIX · {vix_label}</span></div><div class="metric-note">VIX as of {vix_asof} · {vix_status}</div><div class="metric-note">S&P 500 trend: {spy_trend}</div><div class="metric-note">10Y Treasury proxy: {yield_text} · as of {tnx_asof} · {tnx_status}</div><div class="metric-note">{pos_breadth} of {len(sector_rows)} sectors positive over the past month</div></div>', unsafe_allow_html=True)
-    with mc2:
-        st.dataframe(pd.DataFrame(benchmarks), use_container_width=True, hide_index=True,
-                     column_config={"Last":st.column_config.NumberColumn(format="$%.2f"),"Day":st.column_config.NumberColumn(format="%+.2f%%"),"1 month":st.column_config.NumberColumn(format="%+.1f%%")})
-    with st.expander("Sector rotation · 11 sector ETFs"):
-        if sector_rows:
-            st.dataframe(pd.DataFrame(sector_rows), use_container_width=True, hide_index=True,
-                         column_config={column:st.column_config.NumberColumn(format="%+.1f%%") for column in ("1 month","vs S&P 1m","3 months","vs S&P 3m")})
-            st.caption("Sector ETFs are proxies. Relative returns compare each sector ETF with SPY; this is not a complete measure of individual-stock market breadth.")
-    st.caption("VIX reflects options-implied, non-directional 30-day S&P 500 volatility, not a forecast of whether the market will rise or fall. Its calm / moderate / elevated labels are rough display bands. [Cboe methodology](https://www.cboe.com/tradable_products/vix/faqs)")
+    snapshot_symbol = html.escape(selected)
+    snapshot_company = html.escape(stats.get("name") or selected)
+    st.markdown(f'## Selected ticker snapshot <span class="snapshot-security">({snapshot_symbol} · {snapshot_company})</span>', unsafe_allow_html=True)
+    cols = st.columns(4)
+    move_explanation = ("A one-standard-deviation 30-day range from " + stats["move_source"] + ". This describes possible variability, not whether price is expected to rise or fall.")
+    trend_note = f"RSI {stats['rsi']:.0f} · 20d / 50d / 200d trend" if np.isfinite(stats['rsi']) else "RSI unavailable · trend windows require full history"
+    metrics = [
+        ("Last close", f"${stats['last']:,.2f}", f"<span style='color:{change_color}'>{stats['change']:+.2f}% today</span>" if np.isfinite(stats['change']) else "Daily change unavailable",
+         "Latest adjusted daily closing price returned by the provider. Today's change compares it with the prior available daily close."),
+        ("30 day expected move", f"±{stats['move']*100:.1f}%" if np.isfinite(stats['move']) else "Unavailable", stats["move_source"], move_explanation),
+        ("Trend read", stats["state"], trend_note, trend_explanation(stats)),
+        ("Signal rating", stats["rating"], f"{stats['constructive_checks']} constructive · {stats['caution_checks']} caution checks", rating_explanation(stats)),
+    ]
+    for col, (label, value, note, explanation) in zip(cols, metrics):
+        safe_label = html.escape(label)
+        safe_explanation = html.escape(explanation)
+        col.markdown(f'<div class="panel metric-card"><div class="metric-label-row"><div class="metric-label">{safe_label}</div><span class="help-icon" tabindex="0" role="button" aria-label="Explanation for {safe_label}">i<span class="metric-tooltip" role="tooltip">{safe_explanation}</span></span></div><div class="metric-value">{value}</div><div class="metric-note">{note}</div></div>', unsafe_allow_html=True)
+    
+    st.write("")
+    left, right = st.columns([1.55, 1])
+    with left:
+        st.markdown('<div class="panel"><div class="smallcaps">Price action · 6 months</div>', unsafe_allow_html=True)
+        price_figure = price_chart(history, selected)
+        if LIGHT_THEME:
+            price_figure.update_traces(line={"color":"#087f63"}, selector={"name":selected})
+            price_figure.update_traces(line={"color":"#536ac7"}, selector={"name":"20 day average"})
+            price_figure.update_layout(font={"color":"#61756f","family":"Manrope"})
+            price_figure.update_yaxes(gridcolor="#e1e9e5")
+        st.plotly_chart(price_figure, use_container_width=True, config={"displayModeBar":False})
+        st.markdown("</div>", unsafe_allow_html=True)
+    with right:
+        st.markdown('<div class="panel"><div class="smallcaps">Market read</div>', unsafe_allow_html=True)
+        above20 = stats["last"] > stats["sma20"] if np.isfinite(stats["sma20"]) else None
+        above50 = stats["last"] > stats["sma50"] if np.isfinite(stats["sma50"]) else None
+        trend_text = f"Price is {'above' if above20 is True else 'below' if above20 is False else 'unavailable versus'} its 20 day average and {'above' if above50 is True else 'below' if above50 is False else 'unavailable versus'} its 50 day average. The trend read is {stats['state'].lower()}."
+        if np.isfinite(stats["rsi"]) and stats["rsi"] >= 70: rsi_text = "Momentum is elevated (RSI above 70), which can accompany an extended move."
+        elif np.isfinite(stats["rsi"]) and stats["rsi"] <= 30: rsi_text = "Momentum is subdued (RSI below 30); this alone does not signal a reversal."
+        elif np.isfinite(stats["rsi"]): rsi_text = "Momentum is in a middle range based on the 14 day RSI."
+        else: rsi_text = "Momentum is unavailable because there is not enough history for a 14 day RSI."
+        move_low, move_high = ((stats["last"] * (1-stats["move"]), stats["last"] * (1+stats["move"]))
+                               if np.isfinite(stats["move"]) else (np.nan, np.nan))
+        st.markdown(f"**Trend.** {trend_text}")
+        st.markdown(f"**Momentum.** {rsi_text}")
+        if np.isfinite(stats["move"]):
+            st.markdown(f"**Volatility range.** A one standard deviation estimate puts the 30 day range around **${move_low:,.2f}–${move_high:,.2f}**. It describes uncertainty, not direction.")
+        else:
+            st.markdown("**Volatility range.** Unavailable because neither a usable options estimate nor a full realized-volatility window was returned.")
+        if payload["options_expiry"]:
+            st.caption(f"Options snapshot uses near-the-money implied volatility around {payload['options_expiry']}.")
+        elif np.isfinite(stats["hist_vol"]):
+            st.caption("Options implied volatility unavailable; expected range uses the trailing 30-session realized volatility estimate.")
+        else:
+            st.caption(f"Options implied volatility unavailable; only {stats['hist_vol_observations']} of 30 realized-volatility sessions are available.")
+        st.markdown("</div>", unsafe_allow_html=True)
     
     st.write("")
 st.markdown('<div id="discovery-index" class="section-anchor"></div>', unsafe_allow_html=True)
@@ -750,62 +739,73 @@ with st.container(border=True):
             st.info(f"No other events were returned for the next {event_window} days.")
         st.caption("Event coverage varies by market and issuer. Dates are provided by Yahoo Finance and may be incomplete.")
     
-st.markdown('<div id="selected-ticker" class="section-anchor"></div>', unsafe_allow_html=True)
+st.markdown('<div id="market-pulse" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
-    snapshot_symbol = html.escape(selected)
-    snapshot_company = html.escape(stats.get("name") or selected)
-    st.markdown(f'## Selected ticker snapshot <span class="snapshot-security">({snapshot_symbol} · {snapshot_company})</span>', unsafe_allow_html=True)
-    cols = st.columns(4)
-    move_explanation = ("A one-standard-deviation 30-day range from " + stats["move_source"] + ". This describes possible variability, not whether price is expected to rise or fall.")
-    trend_note = f"RSI {stats['rsi']:.0f} · 20d / 50d / 200d trend" if np.isfinite(stats['rsi']) else "RSI unavailable · trend windows require full history"
-    metrics = [
-        ("Last close", f"${stats['last']:,.2f}", f"<span style='color:{change_color}'>{stats['change']:+.2f}% today</span>" if np.isfinite(stats['change']) else "Daily change unavailable",
-         "Latest adjusted daily closing price returned by the provider. Today's change compares it with the prior available daily close."),
-        ("30 day expected move", f"±{stats['move']*100:.1f}%" if np.isfinite(stats['move']) else "Unavailable", stats["move_source"], move_explanation),
-        ("Trend read", stats["state"], trend_note, trend_explanation(stats)),
-        ("Signal rating", stats["rating"], f"{stats['constructive_checks']} constructive · {stats['caution_checks']} caution checks", rating_explanation(stats)),
-    ]
-    for col, (label, value, note, explanation) in zip(cols, metrics):
-        safe_label = html.escape(label)
-        safe_explanation = html.escape(explanation)
-        col.markdown(f'<div class="panel metric-card"><div class="metric-label-row"><div class="metric-label">{safe_label}</div><span class="help-icon" tabindex="0" role="button" aria-label="Explanation for {safe_label}">i<span class="metric-tooltip" role="tooltip">{safe_explanation}</span></span></div><div class="metric-value">{value}</div><div class="metric-note">{note}</div></div>', unsafe_allow_html=True)
-    
-    st.write("")
-    left, right = st.columns([1.55, 1])
-    with left:
-        st.markdown('<div class="panel"><div class="smallcaps">Price action · 6 months</div>', unsafe_allow_html=True)
-        price_figure = price_chart(history, selected)
-        if LIGHT_THEME:
-            price_figure.update_traces(line={"color":"#087f63"}, selector={"name":selected})
-            price_figure.update_traces(line={"color":"#536ac7"}, selector={"name":"20 day average"})
-            price_figure.update_layout(font={"color":"#61756f","family":"Manrope"})
-            price_figure.update_yaxes(gridcolor="#e1e9e5")
-        st.plotly_chart(price_figure, use_container_width=True, config={"displayModeBar":False})
-        st.markdown("</div>", unsafe_allow_html=True)
-    with right:
-        st.markdown('<div class="panel"><div class="smallcaps">Market read</div>', unsafe_allow_html=True)
-        above20 = stats["last"] > stats["sma20"] if np.isfinite(stats["sma20"]) else None
-        above50 = stats["last"] > stats["sma50"] if np.isfinite(stats["sma50"]) else None
-        trend_text = f"Price is {'above' if above20 is True else 'below' if above20 is False else 'unavailable versus'} its 20 day average and {'above' if above50 is True else 'below' if above50 is False else 'unavailable versus'} its 50 day average. The trend read is {stats['state'].lower()}."
-        if np.isfinite(stats["rsi"]) and stats["rsi"] >= 70: rsi_text = "Momentum is elevated (RSI above 70), which can accompany an extended move."
-        elif np.isfinite(stats["rsi"]) and stats["rsi"] <= 30: rsi_text = "Momentum is subdued (RSI below 30); this alone does not signal a reversal."
-        elif np.isfinite(stats["rsi"]): rsi_text = "Momentum is in a middle range based on the 14 day RSI."
-        else: rsi_text = "Momentum is unavailable because there is not enough history for a 14 day RSI."
-        move_low, move_high = ((stats["last"] * (1-stats["move"]), stats["last"] * (1+stats["move"]))
-                               if np.isfinite(stats["move"]) else (np.nan, np.nan))
-        st.markdown(f"**Trend.** {trend_text}")
-        st.markdown(f"**Momentum.** {rsi_text}")
-        if np.isfinite(stats["move"]):
-            st.markdown(f"**Volatility range.** A one standard deviation estimate puts the 30 day range around **${move_low:,.2f}–${move_high:,.2f}**. It describes uncertainty, not direction.")
-        else:
-            st.markdown("**Volatility range.** Unavailable because neither a usable options estimate nor a full realized-volatility window was returned.")
-        if payload["options_expiry"]:
-            st.caption(f"Options snapshot uses near-the-money implied volatility around {payload['options_expiry']}.")
-        elif np.isfinite(stats["hist_vol"]):
-            st.caption("Options implied volatility unavailable; expected range uses the trailing 30-session realized volatility estimate.")
-        else:
-            st.caption(f"Options implied volatility unavailable; only {stats['hist_vol_observations']} of 30 realized-volatility sessions are available.")
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("## Market pulse")
+    st.markdown("### Index performance")
+    context_meta = context.get("_metadata", {})
+    status_counts = pd.Series([meta.status for meta in context_meta.values()]).value_counts().to_dict() if context_meta else {}
+    st.caption(f"Broad-market source: Yahoo Finance via yfinance · retrieved {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} · daily interval · quality statuses: {status_counts or 'unavailable'} · quote delay is not verified by this provider")
+    benchmarks = []
+    for symbol, label in (("SPY","S&P 500"),("QQQ","Nasdaq 100"),("IWM","Small caps"),("DIA","Dow")):
+        frame = context.get(symbol)
+        if frame is not None and not frame.empty:
+            price = frame["Close"].dropna()
+            day_move = float(price.iloc[-1]) / float(price.iloc[-2]) - 1 if len(price) >= 2 else np.nan
+            month_move = float(price.iloc[-1]) / float(price.iloc[-22]) - 1 if len(price) >= 22 else np.nan
+            above_50 = float(price.iloc[-1]) > float(price.tail(50).mean()) if len(price) >= 50 else np.nan
+            metadata = context_meta.get(symbol)
+            benchmarks.append({"Market":label,"Ticker":symbol,"Last":float(price.iloc[-1]),"Day":day_move,"1 month":month_move,"Above 50d":above_50,
+                               "As of":pd.Timestamp(price.index[-1]).strftime("%Y-%m-%d"),
+                               "Data status":metadata.status if metadata else "unknown"})
+    vix_frame = context.get("^VIX")
+    vix_level = float(vix_frame["Close"].dropna().iloc[-1]) if vix_frame is not None and not vix_frame.empty else np.nan
+    spy_frame = context.get("SPY")
+    spy_trend = "unclear"
+    if spy_frame is not None and len(spy_frame) >= 200:
+        spy_close = spy_frame["Close"].dropna()
+        spy_last = float(spy_close.iloc[-1]); spy50 = float(spy_close.tail(50).mean()); spy200 = float(spy_close.tail(200).mean())
+        spy_trend = "above 50d and 200d averages; 50d above 200d" if spy_last > spy50 > spy200 else "below 50d and 200d averages; 50d below 200d" if spy_last < spy50 < spy200 else "mixed moving-average alignment"
+    elif spy_frame is not None:
+        spy_trend = "insufficient history for 200d trend"
+    sector_rows = []
+    spy1m = np.nan; spy3m = np.nan
+    if spy_frame is not None and len(spy_frame) >= 64:
+        _spyclose = spy_frame["Close"].dropna()
+        spy1m = float(_spyclose.iloc[-1]) / float(_spyclose.iloc[-22]) - 1
+        spy3m = float(_spyclose.iloc[-1]) / float(_spyclose.iloc[-64]) - 1
+    for sector, symbol in SECTORS.items():
+        frame = context.get(symbol)
+        if frame is not None and len(frame) >= 64:
+            close = frame["Close"].dropna()
+            perf1m = float(close.iloc[-1]) / float(close.iloc[-22]) - 1
+            perf3m = float(close.iloc[-1]) / float(close.iloc[-64]) - 1
+            metadata = context_meta.get(symbol)
+            sector_rows.append({"Sector":sector,"ETF":symbol,"1 month":perf1m,"vs S&P 1m":perf1m-spy1m if np.isfinite(spy1m) else np.nan,"3 months":perf3m,"vs S&P 3m":perf3m-spy3m if np.isfinite(spy3m) else np.nan,"Above 50d":float(close.iloc[-1]) > float(close.tail(50).mean()),"As of":pd.Timestamp(close.index[-1]).strftime("%Y-%m-%d"),"Data status":metadata.status if metadata else "unknown"})
+    sector_rows.sort(key=lambda x:x["vs S&P 1m"] if np.isfinite(x["vs S&P 1m"]) else -999, reverse=True)
+    pos_breadth = sum(1 for row in sector_rows if row["1 month"] > 0)
+    mc1, mc2 = st.columns([1, 2])
+    with mc1:
+        vix_text = f"{vix_level:.1f}" if np.isfinite(vix_level) else "Unavailable"
+        vix_label = "elevated" if np.isfinite(vix_level) and vix_level >= 25 else "moderate" if np.isfinite(vix_level) and vix_level >= 18 else "calm" if np.isfinite(vix_level) else "—"
+        tnx_frame = context.get("^TNX")
+        yield10 = float(tnx_frame["Close"].dropna().iloc[-1]) if tnx_frame is not None and not tnx_frame.empty else np.nan
+        yield_text = f"{yield10:.2f}%" if np.isfinite(yield10) else "—"
+        vix_meta, tnx_meta = context_meta.get("^VIX"), context_meta.get("^TNX")
+        vix_asof = pd.Timestamp(vix_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if vix_frame is not None and not vix_frame.empty else "unavailable"
+        tnx_asof = pd.Timestamp(tnx_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if tnx_frame is not None and not tnx_frame.empty else "unavailable"
+        vix_status = vix_meta.status if vix_meta else "unknown"
+        tnx_status = tnx_meta.status if tnx_meta else "unknown"
+        st.markdown(f'<div class="panel"><div class="smallcaps">Regime & volatility</div><div class="metric-value">{vix_text} <span style="font:500 14px Manrope;color:var(--muted)">VIX · {vix_label}</span></div><div class="metric-note">VIX as of {vix_asof} · {vix_status}</div><div class="metric-note">S&P 500 trend: {spy_trend}</div><div class="metric-note">10Y Treasury proxy: {yield_text} · as of {tnx_asof} · {tnx_status}</div><div class="metric-note">{pos_breadth} of {len(sector_rows)} sectors positive over the past month</div></div>', unsafe_allow_html=True)
+    with mc2:
+        st.dataframe(pd.DataFrame(benchmarks), use_container_width=True, hide_index=True,
+                     column_config={"Last":st.column_config.NumberColumn(format="$%.2f"),"Day":st.column_config.NumberColumn(format="%+.2f%%"),"1 month":st.column_config.NumberColumn(format="%+.1f%%")})
+    with st.expander("Sector rotation · 11 sector ETFs"):
+        if sector_rows:
+            st.dataframe(pd.DataFrame(sector_rows), use_container_width=True, hide_index=True,
+                         column_config={column:st.column_config.NumberColumn(format="%+.1f%%") for column in ("1 month","vs S&P 1m","3 months","vs S&P 3m")})
+            st.caption("Sector ETFs are proxies. Relative returns compare each sector ETF with SPY; this is not a complete measure of individual-stock market breadth.")
+    st.caption("VIX reflects options-implied, non-directional 30-day S&P 500 volatility, not a forecast of whether the market will rise or fall. Its calm / moderate / elevated labels are rough display bands. [Cboe methodology](https://www.cboe.com/tradable_products/vix/faqs)")
     
     st.write("")
 st.markdown('<div id="technical-analysis" class="section-anchor"></div>', unsafe_allow_html=True)
