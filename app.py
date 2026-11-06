@@ -83,7 +83,7 @@ st.markdown("""
 html, body, [class*="css"] { font-family:'Manrope',sans-serif; }
 .stApp { background:radial-gradient(ellipse at 78% -5%,color-mix(in srgb,var(--mint) 11%,var(--app-bg)) 0%,var(--app-bg) 48%); color:var(--ink); }
 [data-testid="stSidebar"] { background:var(--market-lens-sidebar,var(--secondary-background-color,#0e191c)); border-right:1px solid var(--line); }
-[data-testid="stHeader"] { background:transparent; }
+[data-testid="stHeader"] { display:none; }
 h1,h2,h3 { letter-spacing:-.04em !important; }
 .brand { font-size:12px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; color:var(--mint); }
 .jujosmi-home-link { display:block; margin:0 0 18px; line-height:0; }
