@@ -1,6 +1,10 @@
 <!-- Replace the src with your deployed public Streamlit app URL. -->
 <div class="market-lens-embed">
+  <div class="market-lens-loading" id="market-lens-loading" role="status" aria-live="polite">
+    <div><span class="market-lens-loading-mark">◉</span><strong>Market Lens</strong><span>Loading your market dashboard…</span></div>
+  </div>
   <iframe
+    id="market-lens-frame"
     src="https://YOUR-MARKET-LENS-APP.streamlit.app/?embed=true"
     title="Market Lens stock research dashboard"
     loading="lazy"
@@ -10,6 +14,7 @@
 
 <style>
   .market-lens-embed {
+    position: relative;
     width: 100%;
     min-height: 720px;
     height: min(92vh, 1100px);
@@ -26,6 +31,23 @@
     border: 0;
   }
 
+  .market-lens-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    color: #edf4f2;
+    background: #0b1417;
+    text-align: center;
+  }
+
+  .market-lens-loading[hidden] { display: none; }
+  .market-lens-loading div { display: grid; justify-items: center; gap: 10px; }
+  .market-lens-loading-mark { color: #76e0b2; font-size: 28px; }
+  .market-lens-loading strong { font: 800 12px Manrope, sans-serif; letter-spacing: .16em; text-transform: uppercase; }
+  .market-lens-loading div > span:last-child { color: #91a6a3; font: 13px Manrope, sans-serif; }
+
   @media (max-width: 700px) {
     .market-lens-embed {
       min-height: 82vh;
@@ -34,3 +56,18 @@
     }
   }
 </style>
+
+<script>
+  (() => {
+    const frame = document.getElementById("market-lens-frame");
+    const loading = document.getElementById("market-lens-loading");
+    const appOrigin = new URL(frame.src, window.location.href).origin;
+    window.addEventListener("message", (event) => {
+      if ((event.origin === appOrigin || event.origin === "null") &&
+          event.data?.type === "market-lens-ready" &&
+          event.data?.token === "market-lens-ready-v1") {
+        loading.hidden = true;
+      }
+    });
+  })();
+</script>

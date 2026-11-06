@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 try:
     # yfinance ships this mapping locally, so the industry directory can still
@@ -382,6 +383,30 @@ def load_industry_companies(industry_key: str) -> tuple[pd.DataFrame, str | None
         return pd.DataFrame(), f"{type(exc).__name__}: {str(exc)[:180]}"
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def rate_industry_companies(symbols: tuple[str, ...]) -> dict[str, str]:
+    """Apply the same technical screen used by the selected-ticker snapshot."""
+    if not symbols:
+        return {}
+    try:
+        histories = YahooFinanceProvider().histories(list(symbols), period="2y", interval="1d")
+        benchmark = load_benchmark()
+    except Exception:
+        return {symbol:"Unavailable" for symbol in symbols}
+
+    ratings = {}
+    for symbol in symbols:
+        result = histories.get(symbol)
+        if result is None or result.data.empty:
+            ratings[symbol] = "Unavailable"
+            continue
+        try:
+            ratings[symbol] = analyze(result.data, {}, None, benchmark).get("rating", "Unavailable")
+        except Exception:
+            ratings[symbol] = "Unavailable"
+    return ratings
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def load_upcoming_events(start_date: date, end_date: date,
                          watchlist_symbols: tuple[str, ...] = ()) -> dict[str, object]:
@@ -652,12 +677,17 @@ with st.container(border=True):
                     st.caption("Yahoo Finance returned no top-performing or top-growth companies for this industry.")
             else:
                 company_display = companies.copy()
-                provider_rating_column = next((column for column in company_display.columns
-                                               if str(column).strip().casefold() == "rating"), None)
-                if provider_rating_column is not None:
-                    company_display = company_display.rename(columns={provider_rating_column:"Analyst rating"})
+                company_symbols = tuple(dict.fromkeys(
+                    str(symbol).strip().upper() for symbol in companies.index
+                    if str(symbol).strip() and str(symbol).casefold() != "nan"
+                ))
+                company_ratings = rate_industry_companies(company_symbols)
+                company_display.insert(
+                    0, "Market Lens rating",
+                    [company_ratings.get(str(symbol).strip().upper(), "Unavailable") for symbol in company_display.index],
+                )
                 st.dataframe(company_display, use_container_width=True)
-                st.caption("Industry listings show Yahoo Finance’s top companies, not a complete exchange-wide security master. The Analyst rating column is provider-reported analyst consensus; it can say Buy while Market Lens’ technical signal says Sell because they measure different things.")
+                st.caption("Market Lens rating uses the same technical checks as the ticker snapshot. Unavailable means the required price history or benchmark data was incomplete. Industry listings are Yahoo Finance’s top-performing and top-growth companies, not a complete exchange-wide security master.")
                 company_frame = companies.reset_index()
                 symbol_column = next((col for col in company_frame.columns if str(col).lower() in ("symbol", "ticker")), None)
                 name_column = next((col for col in company_frame.columns if str(col).lower() in ("name", "company", "shortname")), None)
@@ -1020,3 +1050,10 @@ if isinstance(chat_event, dict):
                 st.session_state["market_lens_chat_messages"].append({"role":"assistant", "content":answer})
                 st.session_state["market_lens_chat_messages"] = st.session_state["market_lens_chat_messages"][-40:]
                 st.rerun()
+
+# Tell the website embed that the dashboard has rendered. The parent page uses
+# this signal to keep Streamlit's startup header covered until Market Lens is ready.
+components.html(
+    '<script>window.parent.parent.postMessage({type:"market-lens-ready",token:"market-lens-ready-v1"},"*");</script>',
+    height=1,
+)
