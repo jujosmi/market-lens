@@ -58,7 +58,8 @@ class YahooFinanceProvider(MarketDataProvider):
         if status == "stale":
             warning = warning or f"Latest price observation is {age_days:.1f} days old."
         elif status == "partial":
-            warning = warning or "Some provider rows had missing closes and were excluded."
+            excluded_rows = original_rows - len(cleaned)
+            warning = warning or f"{excluded_rows} of {original_rows} returned price rows had no closing price and were omitted."
         return DataEnvelope(cleaned, DATA_PROVIDER_NAME, retrieved_at, interval, status,
                             last_observation, "unknown", warning)
 

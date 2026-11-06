@@ -318,23 +318,9 @@ def load_market_context() -> dict:
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_industry_index() -> pd.DataFrame:
     rows = []
-    for sector_key in SECTOR_KEYS:
-        try:
-            sector = yf.Sector(sector_key)
-            industries = sector.industries
-            if industries is None or industries.empty:
-                continue
-            for idx, row in industries.iterrows():
-                industry_key = row.get("key") or row.get("industryKey") or str(idx)
-                industry_name = row.get("name") or str(industry_key).replace("-", " ").title()
-                rows.append({"industry_key":industry_key, "industry":industry_name,
-                             "sector_key":sector_key, "sector":sector.name, "source":"Yahoo Finance"})
-        except Exception:
-            continue
-
-    # Yahoo's sector endpoint can fail independently of the rest of the app.
-    # Fill gaps from yfinance's bundled sector map so search and industry
-    # selection remain available during a provider outage.
+    # Use yfinance's bundled taxonomy for the directory itself. This keeps
+    # industry search and selection deterministic instead of relying on eleven
+    # separate live sector requests just to populate the buttons.
     sector_labels = {
         "technology":"Technology", "communication-services":"Communication Services",
         "consumer-cyclical":"Consumer Cyclical", "consumer-defensive":"Consumer Defensive",
@@ -342,17 +328,15 @@ def load_industry_index() -> pd.DataFrame:
         "industrials":"Industrials", "basic-materials":"Basic Materials",
         "real-estate":"Real Estate", "utilities":"Utilities",
     }
-    existing_keys = {str(row["industry_key"]) for row in rows}
     for sector_key in SECTOR_KEYS:
         sector_name = sector_labels.get(sector_key, sector_key.replace("-", " ").title())
         for industry_name in SECTOR_INDUSTY_MAPPING.get(sector_name, set()):
             name = str(industry_name).strip()
             industry_key = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").casefold()
             industry_key = re.sub(r"[^a-z0-9]+", "-", industry_key).strip("-")
-            if name and industry_key not in existing_keys:
+            if name:
                 rows.append({"industry_key":industry_key, "industry":name,
                              "sector_key":sector_key, "sector":sector_name, "source":"Built-in directory"})
-                existing_keys.add(industry_key)
 
     return pd.DataFrame(rows).drop_duplicates(subset=["industry_key"]) if rows else pd.DataFrame(columns=["industry_key","industry","sector_key","sector","source"])
 
@@ -367,24 +351,58 @@ def load_industry_companies(industry_key: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_upcoming_events(start_date: date, end_date: date) -> dict[str, pd.DataFrame]:
+def load_upcoming_events(start_date: date, end_date: date,
+                         watchlist_symbols: tuple[str, ...] = ()) -> dict[str, object]:
+    results: dict[str, object] = {
+        "Earnings":pd.DataFrame(), "IPOs":pd.DataFrame(), "Splits":pd.DataFrame(),
+        "Economic events":pd.DataFrame(), "_errors":{}, "_earnings_fallback":False,
+    }
+    errors: dict[str, str] = {}
     try:
         calendar = yf.Calendars(start=start_date, end=end_date)
-    except Exception:
-        return {"Earnings":pd.DataFrame(), "IPOs":pd.DataFrame(), "Splits":pd.DataFrame(), "Economic events":pd.DataFrame()}
-    results = {}
-    requests = {
-        "Earnings":lambda:calendar.get_earnings_calendar(start=start_date, end=end_date, limit=100, filter_most_active=False),
-        "IPOs":lambda:calendar.get_ipo_info_calendar(start=start_date, end=end_date, limit=100),
-        "Splits":lambda:calendar.get_splits_calendar(start=start_date, end=end_date, limit=100),
-        "Economic events":lambda:calendar.get_economic_events_calendar(start=start_date, end=end_date, limit=100),
-    }
-    for label, fetch in requests.items():
-        try:
-            data = fetch()
-            results[label] = data if isinstance(data, pd.DataFrame) else pd.DataFrame()
-        except Exception:
-            results[label] = pd.DataFrame()
+    except Exception as exc:
+        calendar = None
+        errors["Calendar"] = f"{type(exc).__name__}: {str(exc)[:180]}"
+
+    if calendar is not None:
+        requests = {
+            "Earnings":lambda:calendar.get_earnings_calendar(start=start_date, end=end_date, limit=100, filter_most_active=False),
+            "IPOs":lambda:calendar.get_ipo_info_calendar(start=start_date, end=end_date, limit=100),
+            "Splits":lambda:calendar.get_splits_calendar(start=start_date, end=end_date, limit=100),
+            "Economic events":lambda:calendar.get_economic_events_calendar(start=start_date, end=end_date, limit=100),
+        }
+        for label, fetch in requests.items():
+            try:
+                data = fetch()
+                results[label] = data if isinstance(data, pd.DataFrame) else pd.DataFrame()
+            except Exception as exc:
+                errors[label] = f"{type(exc).__name__}: {str(exc)[:180]}"
+
+    # Keep an earnings view available for the user's own symbols if Yahoo's
+    # market-wide calendar query is empty or unavailable.
+    if isinstance(results["Earnings"], pd.DataFrame) and results["Earnings"].empty:
+        fallback_frames = []
+        for symbol in watchlist_symbols:
+            try:
+                frame = yf.Ticker(symbol).get_earnings_dates(limit=12)
+                if not isinstance(frame, pd.DataFrame) or frame.empty:
+                    continue
+                frame = frame.reset_index()
+                date_column = frame.columns[0]
+                event_dates = pd.to_datetime(frame[date_column], errors="coerce", utc=True).dt.date
+                frame = frame.loc[(event_dates >= start_date) & (event_dates <= end_date)].copy()
+                if frame.empty:
+                    continue
+                frame = frame.rename(columns={date_column:"Event Date"})
+                frame.insert(0, "Symbol", symbol)
+                fallback_frames.append(frame)
+            except Exception:
+                continue
+        if fallback_frames:
+            results["Earnings"] = pd.concat(fallback_frames, ignore_index=True)
+            results["_earnings_fallback"] = True
+
+    results["_errors"] = errors
     return results
 
 
@@ -459,7 +477,10 @@ with st.container(border=True):
     st.markdown(f'<div class="eyebrow">{html.escape(stats["name"] or selected)} &nbsp;·&nbsp; {selected} &nbsp;·&nbsp; {company_industry} &nbsp;·&nbsp; {datetime.now().strftime("%A, %B %d")}</div>', unsafe_allow_html=True)
     st.caption(f"Price source: {history_meta.source} · retrieved: {history_meta.retrieved_at.astimezone().strftime('%Y-%m-%d %H:%M %Z')} · interval: {history_meta.interval} · status: {history_meta.status} · latest bar: {history_meta.last_observation or 'unavailable'} · quote delay: {history_meta.provider_delay}")
     if history_meta.warning:
-        st.warning(history_meta.warning)
+        if history_meta.status == "partial":
+            st.caption(f"Data note · {history_meta.warning}")
+        else:
+            st.warning(history_meta.warning)
     for warning in payload.get("optional_warnings", []):
         st.warning(warning)
     
@@ -540,7 +561,7 @@ with st.container(border=True):
     event_start = date.today()
     event_end = event_start + timedelta(days=event_window)
     with st.spinner("Loading upcoming company and market events…"):
-        upcoming_events = load_upcoming_events(event_start, event_end)
+        upcoming_events = load_upcoming_events(event_start, event_end, tuple(symbols))
     index_tab, earnings_tab, ipo_tab, events_tab = st.tabs(["Industry directory", "Earnings soon", "IPOs soon", "Other events"])
     st.caption(f"Industry and calendar data: Yahoo Finance via yfinance · retrieved {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} · coverage and provider delay are not verified.")
     with index_tab:
@@ -549,8 +570,7 @@ with st.container(border=True):
             st.info("Industry directory data is temporarily unavailable. Use ticker search or the watchlist industry filter in the meantime.")
         else:
             industry_index = industry_index.sort_values(["sector", "industry"])
-            if "source" in industry_index.columns and (industry_index["source"] != "Yahoo Finance").any():
-                st.info("The live industry list is partially unavailable. The directory is using its built-in industry index for missing entries; company listings may return when Yahoo Finance is available again.")
+            st.caption("Industry categories are indexed locally; company listings load from Yahoo Finance when you select a category.")
             industry_options = [
                 {"label":f"{row.industry} · {row.sector}", "industry":str(row.industry),
                  "sector":str(row.sector), "key":str(row.industry_key)}
@@ -628,15 +648,27 @@ with st.container(border=True):
                                     )
     with earnings_tab:
         earnings = upcoming_events.get("Earnings", pd.DataFrame())
+        calendar_errors = upcoming_events.get("_errors", {})
         if earnings.empty:
-            st.info(f"No earnings dates were returned for the next {event_window} days.")
+            if "Earnings" in calendar_errors or "Calendar" in calendar_errors:
+                detail = calendar_errors.get("Earnings") or calendar_errors.get("Calendar")
+                st.warning(f"The earnings calendar could not be loaded: {detail}")
+            else:
+                st.info(f"No earnings dates were returned for the next {event_window} days.")
         else:
             st.dataframe(earnings.reset_index() if earnings.index.name else earnings, use_container_width=True, hide_index=True)
+            if upcoming_events.get("_earnings_fallback"):
+                st.caption("The market-wide calendar was empty, so these dates are from the ticker calendars in your watchlist.")
         st.caption(f"This is an earnings-date calendar for the next {event_window} days. An earnings call may take place after the results release; confirm the call time on the company’s investor relations site.")
     with ipo_tab:
         ipo_calendar = upcoming_events.get("IPOs", pd.DataFrame())
         if ipo_calendar.empty:
-            st.info(f"No IPO listings were returned for the next {event_window} days.")
+            if "IPOs" in calendar_errors or "Calendar" in calendar_errors:
+                detail = calendar_errors.get("IPOs") or calendar_errors.get("Calendar")
+                st.warning(f"The IPO calendar could not be loaded: {detail}")
+            else:
+                st.info(f"No IPO listings were returned for the next {event_window} days.")
+            st.markdown("Check exchange calendars: [Nasdaq IPO calendar](https://www.nasdaq.com/market-activity/ipos) · [NYSE IPO filings](https://www.nyse.com/ipo-center/filings)")
         else:
             st.dataframe(ipo_calendar.reset_index() if ipo_calendar.index.name else ipo_calendar, use_container_width=True, hide_index=True)
         st.caption("IPO dates, offer prices and share counts can be preliminary and may change. Confirm with the issuer’s filings and exchange notices.")
