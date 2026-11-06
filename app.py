@@ -318,9 +318,8 @@ def load_market_context() -> dict:
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_industry_index() -> pd.DataFrame:
     rows = []
-    # Use yfinance's bundled taxonomy for the directory itself. This keeps
-    # industry search and selection deterministic instead of relying on eleven
-    # separate live sector requests just to populate the buttons.
+    # Prefer the live industry key returned by Yahoo. Industry display names
+    # cannot safely be converted to keys for the company-list request.
     sector_labels = {
         "technology":"Technology", "communication-services":"Communication Services",
         "consumer-cyclical":"Consumer Cyclical", "consumer-defensive":"Consumer Defensive",
@@ -329,12 +328,33 @@ def load_industry_index() -> pd.DataFrame:
         "real-estate":"Real Estate", "utilities":"Utilities",
     }
     for sector_key in SECTOR_KEYS:
+        try:
+            sector = yf.Sector(sector_key)
+            industries = sector.industries
+            if not isinstance(industries, pd.DataFrame) or industries.empty:
+                continue
+            sector_name = sector.name or sector_labels.get(sector_key, sector_key.replace("-", " ").title())
+            for idx, row in industries.iterrows():
+                industry_key = row.get("key") or row.get("industryKey") or str(idx)
+                industry_name = row.get("name") or str(industry_key).replace("-", " ").title()
+                rows.append({"industry_key":str(industry_key), "industry":str(industry_name),
+                             "sector_key":sector_key, "sector":str(sector_name), "source":"Yahoo Finance"})
+        except Exception:
+            continue
+
+    # Keep the directory searchable if the live sector listing is unavailable.
+    for sector_key in SECTOR_KEYS:
         sector_name = sector_labels.get(sector_key, sector_key.replace("-", " ").title())
         for industry_name in SECTOR_INDUSTY_MAPPING.get(sector_name, set()):
             name = str(industry_name).strip()
             industry_key = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").casefold()
             industry_key = re.sub(r"[^a-z0-9]+", "-", industry_key).strip("-")
-            if name:
+            already_listed = any(
+                item["industry"].casefold() == name.casefold()
+                or item["industry_key"].casefold() == industry_key
+                for item in rows
+            )
+            if name and not already_listed:
                 rows.append({"industry_key":industry_key, "industry":name,
                              "sector_key":sector_key, "sector":sector_name, "source":"Built-in directory"})
 
@@ -342,12 +362,24 @@ def load_industry_index() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_industry_companies(industry_key: str) -> pd.DataFrame:
+def load_industry_companies(industry_key: str) -> tuple[pd.DataFrame, str | None]:
     try:
-        companies = yf.Industry(industry_key).top_companies
-        return companies if isinstance(companies, pd.DataFrame) else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
+        industry = yf.Industry(industry_key)
+        frames = []
+        for list_name, attribute in (("Top performing", "top_performing_companies"),
+                                     ("Top growth", "top_growth_companies")):
+            companies = getattr(industry, attribute, None)
+            if isinstance(companies, pd.DataFrame) and not companies.empty:
+                frame = companies.copy()
+                frame["Company list"] = list_name
+                frames.append(frame)
+        if not frames:
+            return pd.DataFrame(), None
+        combined = pd.concat(frames, axis=0)
+        combined = combined.loc[~combined.index.astype(str).duplicated(keep="first")]
+        return combined, None
+    except Exception as exc:
+        return pd.DataFrame(), f"{type(exc).__name__}: {str(exc)[:180]}"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -407,7 +439,7 @@ def load_upcoming_events(start_date: date, end_date: date,
 
 
 with st.sidebar:
-    st.markdown('<a class="jujosmi-home-link" href="https://jujosmi.com" target="_blank" rel="noopener noreferrer" aria-label="Visit jujosmi.com"><img src="app/static/jujosmi-logo-detailed-green.png" alt="Jujosmi"></a>', unsafe_allow_html=True)
+    st.markdown('<a class="jujosmi-home-link" href="https://jujosmi.com" target="_blank" rel="noopener noreferrer" aria-label="Visit jujosmi.com"><img src="app/static/jujosmi-logo-simple-shadow.png" alt="Jujosmi"></a>', unsafe_allow_html=True)
     st.markdown('<div class="brand">◉ &nbsp; MARKET LENS</div>', unsafe_allow_html=True)
     st.markdown("### Your watchlist")
     if "watchlist_input" not in st.session_state:
@@ -570,7 +602,7 @@ with st.container(border=True):
             st.info("Industry directory data is temporarily unavailable. Use ticker search or the watchlist industry filter in the meantime.")
         else:
             industry_index = industry_index.sort_values(["sector", "industry"])
-            st.caption("Industry categories are indexed locally; company listings load from Yahoo Finance when you select a category.")
+            st.caption("Yahoo Finance supplies canonical industry keys; a local directory keeps categories searchable if that lookup is unavailable.")
             industry_options = [
                 {"label":f"{row.industry} · {row.sector}", "industry":str(row.industry),
                  "sector":str(row.sector), "key":str(row.industry_key)}
@@ -612,9 +644,12 @@ with st.container(border=True):
             industry_label = selected_option["label"]
             st.markdown(f"**Selected industry:** {industry_label}")
             with st.spinner(f"Loading companies in {selected_option['industry']}…"):
-                companies = load_industry_companies(industry_key)
+                companies, company_error = load_industry_companies(industry_key)
             if companies.empty:
-                st.caption("No company listing was returned for this industry.")
+                if company_error:
+                    st.warning(f"Yahoo Finance could not load companies for this industry: {company_error}")
+                else:
+                    st.caption("Yahoo Finance returned no top-performing or top-growth companies for this industry.")
             else:
                 company_display = companies.copy()
                 provider_rating_column = next((column for column in company_display.columns
