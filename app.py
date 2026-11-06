@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import html
 import os
+import re
+import unicodedata
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -9,6 +11,12 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+try:
+    # yfinance ships this mapping locally, so the industry directory can still
+    # render and be searched when Yahoo's sector endpoint is temporarily down.
+    from yfinance.const import SECTOR_INDUSTY_MAPPING
+except Exception:
+    SECTOR_INDUSTY_MAPPING = {}
 from market_lens.analytics import analyze
 from market_lens.assistant import ask_ai, floating_chat, get_api_key
 from market_lens.charts import price_chart
@@ -325,10 +333,33 @@ def load_industry_index() -> pd.DataFrame:
                 industry_key = row.get("key") or row.get("industryKey") or str(idx)
                 industry_name = row.get("name") or str(industry_key).replace("-", " ").title()
                 rows.append({"industry_key":industry_key, "industry":industry_name,
-                             "sector_key":sector_key, "sector":sector.name})
+                             "sector_key":sector_key, "sector":sector.name, "source":"Yahoo Finance"})
         except Exception:
             continue
-    return pd.DataFrame(rows).drop_duplicates(subset=["industry_key"]) if rows else pd.DataFrame(columns=["industry_key","industry","sector_key","sector"])
+
+    # Yahoo's sector endpoint can fail independently of the rest of the app.
+    # Fill gaps from yfinance's bundled sector map so search and industry
+    # selection remain available during a provider outage.
+    sector_labels = {
+        "technology":"Technology", "communication-services":"Communication Services",
+        "consumer-cyclical":"Consumer Cyclical", "consumer-defensive":"Consumer Defensive",
+        "energy":"Energy", "financial-services":"Financial Services", "healthcare":"Healthcare",
+        "industrials":"Industrials", "basic-materials":"Basic Materials",
+        "real-estate":"Real Estate", "utilities":"Utilities",
+    }
+    existing_keys = {str(row["industry_key"]) for row in rows}
+    for sector_key in SECTOR_KEYS:
+        sector_name = sector_labels.get(sector_key, sector_key.replace("-", " ").title())
+        for industry_name in SECTOR_INDUSTY_MAPPING.get(sector_name, set()):
+            name = str(industry_name).strip()
+            industry_key = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").casefold()
+            industry_key = re.sub(r"[^a-z0-9]+", "-", industry_key).strip("-")
+            if name and industry_key not in existing_keys:
+                rows.append({"industry_key":industry_key, "industry":name,
+                             "sector_key":sector_key, "sector":sector_name, "source":"Built-in directory"})
+                existing_keys.add(industry_key)
+
+    return pd.DataFrame(rows).drop_duplicates(subset=["industry_key"]) if rows else pd.DataFrame(columns=["industry_key","industry","sector_key","sector","source"])
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -523,6 +554,8 @@ with st.container(border=True):
             st.info("Industry directory data is temporarily unavailable. Use ticker search or the watchlist industry filter in the meantime.")
         else:
             industry_index = industry_index.sort_values(["sector", "industry"])
+            if "source" in industry_index.columns and (industry_index["source"] != "Yahoo Finance").any():
+                st.info("The live industry list is partially unavailable. The directory is using its built-in industry index for missing entries; company listings may return when Yahoo Finance is available again.")
             industry_options = [
                 {"label":f"{row.industry} · {row.sector}", "industry":str(row.industry),
                  "sector":str(row.sector), "key":str(row.industry_key)}
