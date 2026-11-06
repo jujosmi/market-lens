@@ -50,7 +50,7 @@ The calculations live in `market_lens/analytics.py` and operate on trading obser
 
 ## News sentiment
 
-`market_lens/news.py` contains inspectable finance-specific phrases, weighted terms, a short negation scope and a binary Bullish / Bearish output with Low / Medium / High heuristic signal. Phrase matches are not double-counted as separate word matches. A tie is displayed as Bearish · Low signal to preserve the requested two-way display; that is a forced label, not evidence of bearish news.
+`market_lens/news.py` contains inspectable finance-specific phrases, weighted terms, a short negation scope and a three-way Bullish / Bearish / Neutral output. Directional labels require enough weighted evidence and company-related context; weak wording, mixed signals, or broad-market headlines without a clear link to the selected company are Neutral. Signal strength is a heuristic, not a calibrated probability. Phrase matches are not double-counted as separate word matches.
 
 Financial language benefits from domain-specific treatment: the [Loughran–McDonald dictionary](https://sraf.nd.edu/loughranmcdonald-master-dictionary/) was developed for financial text, and [FinBERT research](https://arxiv.org/abs/1908.10063) finds finance-trained contextual models outperform earlier approaches on financial sentiment tasks. This app uses a transparent local ruleset, not a trained or calibrated model. It can miss context, sarcasm, source quality and company-specific meaning. Headline tone does not predict stock returns. Read the linked story and verify material claims against company releases or filings.
 

@@ -5,7 +5,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-WINDOWS = {"1M":21, "3M":63, "6M":126, "1Y":252, "2Y":504}
+WINDOW_DAYS = {"1D":1, "5D":7, "1M":31, "2M":62, "3M":93,
+               "6M":186, "1Y":366, "2Y":732, "5Y":1827}
 
 
 def price_chart(
@@ -14,15 +15,18 @@ def price_chart(
     light_mode: bool = False,
     chart_type: str = "Candles",
     window: str = "6M",
-    overlays: tuple[str, ...] | list[str] = ("20D", "50D"),
+    overlays: tuple[str, ...] | list[str] = ("20 day", "50 day"),
+    interval: str = "1 day",
 ) -> go.Figure:
     """Build a TradingView-style price, moving-average, and volume chart."""
-    data = history.sort_index().tail(WINDOWS.get(window, WINDOWS["6M"])).copy()
+    data = history.sort_index().copy()
+    if window in WINDOW_DAYS and not data.empty:
+        data = data.loc[data.index >= data.index[-1] - pd.Timedelta(days=WINDOW_DAYS[window])]
     data = data.dropna(subset=["Close"])
     line_color = "#087f63" if light_mode else "#76e0b2"
-    average_colors = {"20D":"#536ac7" if light_mode else "#9aa9ff",
-                      "50D":"#c27a17" if light_mode else "#f4b860",
-                      "200D":"#a34b9b" if light_mode else "#e58bd5"}
+    average_colors = {20:"#536ac7" if light_mode else "#9aa9ff",
+                      50:"#c27a17" if light_mode else "#f4b860",
+                      200:"#a34b9b" if light_mode else "#e58bd5"}
     label_color = "#61756f" if light_mode else "#91a6a3"
     grid_color = "#e1e9e5" if light_mode else "#203235"
     bull_color = "#087f63" if light_mode else "#26a69a"
@@ -50,15 +54,15 @@ def price_chart(
             hovertemplate="%{x|%b %d, %Y}<br>Close: $%{y:,.2f}<extra></extra>",
         ), row=1, col=1)
 
-    averages = {"20D":(20, "20 day average"), "50D":(50, "50 day average"),
-                "200D":(200, "200 day average")}
-    for key, (period, label) in averages.items():
-        if key not in overlays:
+    bar_unit = "day" if interval == "1 day" else "bar"
+    for period in (20, 50, 200):
+        if f"{period} {bar_unit}" not in overlays:
             continue
+        label = f"{period} {bar_unit} average"
         fig.add_trace(go.Scatter(
             x=data.index, y=data["Close"].rolling(period, min_periods=period).mean(),
             mode="lines", name=label,
-            line={"color":average_colors[key], "width":1.35},
+            line={"color":average_colors[period], "width":1.35},
             hovertemplate=f"%{{x|%b %d, %Y}}<br>{label}: $%{{y:,.2f}}<extra></extra>",
         ), row=1, col=1)
 
@@ -79,7 +83,7 @@ def price_chart(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font={"color":label_color, "family":"Manrope"},
         legend={"orientation":"h", "y":1.08, "x":0},
-        hovermode="x unified", dragmode="pan", uirevision=f"{symbol}:{window}:{chart_type}",
+        hovermode="x unified", dragmode="pan", uirevision=f"{symbol}:{interval}:{window}:{chart_type}",
     )
     fig.update_yaxes(showgrid=True, gridcolor=grid_color, zeroline=False, side="right", row=1, col=1)
     fig.update_yaxes(showgrid=False, zeroline=False, side="right", row=2, col=1,

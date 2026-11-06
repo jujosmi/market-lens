@@ -52,10 +52,41 @@ BEAR_PHRASES = {
 }
 NEGATORS = {"not", "no", "never", "without", "isnt", "isn't", "wasnt", "wasn't", "can't", "cannot", "unable", "fails", "failed", "denies", "denied", "rejects", "rejected"}
 INTENSIFIERS = {"sharply":1.35, "significantly":1.3, "strongly":1.25, "major":1.2, "record":1.15}
+ISSUER_CONTEXT = {
+    "company", "business", "earnings", "quarter", "results", "result", "revenue", "sales", "eps", "guidance", "outlook", "forecast",
+    "profit", "profits", "margin", "demand", "customer", "customers", "contract", "product",
+    "dividend", "buyback", "offering", "debt", "default", "bankruptcy", "fraud", "breach",
+    "fda", "trial", "recall", "lawsuit", "probe", "investigation", "ceo", "cfo", "executive",
+    "analyst", "price", "target", "acquisition", "merger", "production", "factory", "launch",
+    "regulatory", "approval", "approved", "denied", "denies", "denial", "downgrade", "upgrade",
+}
+MARKET_CONTEXT = re.compile(
+    r"\b(?:markets?|stocks?|wall street|nasdaq|s&p\s*500|dow(?:\s+jones)?|futures|"
+    r"treasur(?:y|ies)|bonds?|oil prices|the economy|economy|sector|indices|index)\b",
+    re.IGNORECASE,
+)
+LEGAL_SUFFIXES = {"inc", "incorporated", "corp", "corporation", "company", "co", "ltd", "limited", "plc", "holdings"}
 
 
-def classify_headline(text: str) -> dict:
-    """Return forced binary polarity, heuristic signal strength, scores and evidence."""
+def _selected_issuer_mentioned(text: str, symbol: str | None, company_name: str | None) -> bool:
+    upper = text.upper()
+    ticker = (symbol or "").strip().upper().lstrip("$")
+    if len(ticker) >= 2 and re.search(rf"(?<![A-Z0-9])\$?{re.escape(ticker)}(?![A-Z0-9])", upper):
+        return True
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+    if company_name:
+        name = re.sub(r"[^a-z0-9]+", " ", company_name.casefold()).strip()
+        if len(name) >= 4 and name in normalized:
+            return True
+        aliases = [word for word in name.split() if len(word) >= 4 and word not in LEGAL_SUFFIXES]
+        if any(re.search(rf"\b{re.escape(alias)}\b", normalized) for alias in aliases):
+            return True
+    return False
+
+
+def classify_headline(text: str, symbol: str | None = None,
+                      company_name: str | None = None) -> dict:
+    """Return conservative three-way polarity with issuer relevance and evidence."""
     normalized = re.sub(r"([.!?;:,])", " | ", text.lower())
     normalized = re.sub(r"[^a-z0-9' |\-]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
@@ -116,17 +147,35 @@ def classify_headline(text: str) -> dict:
 
     difference = bull - bear
     signal_mass = bull + bear
-    label = "Bullish" if difference > 0 else "Bearish"  # Ties use the documented low-signal bearish convention.
     margin = abs(difference) / signal_mass if signal_mass else 0.0
-    strength = "High" if signal_mass >= 4.0 and margin >= 0.65 else "Medium" if signal_mass >= 1.5 and margin >= 0.4 else "Low"
+    selected_issuer_match = _selected_issuer_mentioned(text, symbol, company_name)
+    issuer_context = any(token in ISSUER_CONTEXT for token in tokens)
+    broad_market_headline = bool(MARKET_CONTEXT.search(text))
+    relevant = selected_issuer_match or (issuer_context and not broad_market_headline)
+
+    # Weak cues, conflicting cues, and broad-market stories without a clear
+    # selected-company link are neutral instead of being forced into Bearish.
+    directional = relevant and signal_mass >= 1.5 and margin >= 0.35
+    label = ("Bullish" if difference > 0 else "Bearish") if directional else "Neutral"
+    strength = ("High" if signal_mass >= 4.0 and margin >= 0.65 else
+                "Medium" if signal_mass >= 1.5 and margin >= 0.4 else "Low") if directional else "Low"
     leading = []
     for side, phrase, _ in sorted(evidence, key=lambda item:item[2], reverse=True):
         if side == label and phrase not in leading:
             leading.append(phrase)
         if len(leading) == 2:
             break
-    reason = ", ".join(leading) if leading else "no clear directional phrase; conservative tie-break"
-    return {"label":label, "confidence":strength, "bull_score":bull, "bear_score":bear, "reason":reason}
+    if label == "Neutral":
+        if not relevant:
+            reason = "broad-market or unrelated wording; no clear selected-company link"
+        elif signal_mass >= 1.5 and margin < 0.35:
+            reason = "bullish and bearish cues conflict"
+        else:
+            reason = "no strong company-specific directional evidence"
+    else:
+        reason = ", ".join(leading) if leading else "directional language"
+    return {"label":label, "confidence":strength, "bull_score":bull, "bear_score":bear,
+            "reason":reason, "issuer_relevant":relevant}
 
 
 def classify_news_topic(text: str) -> str:

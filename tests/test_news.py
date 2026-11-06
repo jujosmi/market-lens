@@ -18,9 +18,9 @@ class HeadlineClassificationTests(unittest.TestCase):
         result = classify_headline("No warning. Shares surge after results")
         self.assertEqual(result["label"], "Bullish")
 
-    def test_ambiguous_headline_is_low_signal_binary_label(self):
+    def test_ambiguous_headline_is_neutral_low_signal(self):
         result = classify_headline("Company announces quarterly results")
-        self.assertEqual(result["label"], "Bearish")
+        self.assertEqual(result["label"], "Neutral")
         self.assertEqual(result["confidence"], "Low")
 
 

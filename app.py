@@ -111,6 +111,7 @@ h1,h2,h3 { letter-spacing:-.04em !important; }
 .pill { display:inline-block; padding:5px 10px; border-radius:99px; font-size:11px; font-weight:800; letter-spacing:.04em; }
 .bull { color:var(--bull); background:color-mix(in srgb,#00a66c 12%,transparent); border:1px solid color-mix(in srgb,#00a66c 30%,transparent); }
 .bear { color:var(--bear); background:color-mix(in srgb,#d64555 11%,transparent); border:1px solid color-mix(in srgb,#d64555 29%,transparent); }
+.neutral { color:var(--muted); background:color-mix(in srgb,var(--muted) 10%,transparent); border:1px solid color-mix(in srgb,var(--muted) 25%,transparent); }
 .low { color:var(--caution); background:color-mix(in srgb,#bd7900 12%,transparent); border:1px solid color-mix(in srgb,#bd7900 30%,transparent); }
 .news-title { color:var(--ink); font-weight:650; text-decoration:none; font-size:14px; line-height:1.45; }
 .news-meta { color:var(--muted); font-size:11px; margin-top:8px; }
@@ -305,6 +306,43 @@ def load_benchmark() -> pd.DataFrame:
 @st.cache_data(ttl=300, show_spinner=False)
 def load_snapshot(symbol: str):
     return YahooFinanceProvider().history(symbol, period="2y", interval="1d")
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_chart_history(symbol: str, interval: str) -> tuple[pd.DataFrame, str | None]:
+    """Load chart-specific bars without shortening the snapshot's daily history."""
+    provider_intervals = {
+        "15 minute":"15m", "30 minute":"30m", "1 hour":"1h", "1 day":"1d",
+    }
+    try:
+        ticker = yf.Ticker(symbol)
+        intraday_end = date.today() + timedelta(days=1)
+        intraday_start = intraday_end - timedelta(days=60)
+        if interval == "1 day":
+            history = ticker.history(period="max", interval="1d", auto_adjust=True)
+        elif interval in {"2 hours", "12 hours"}:
+            hourly = ticker.history(start=intraday_start, end=intraday_end, interval="1h",
+                                    auto_adjust=True, prepost=False)
+            if hourly.empty:
+                return pd.DataFrame(), "Yahoo Finance returned no hourly bars for this ticker."
+            hours = 2 if interval == "2 hours" else 12
+            aggregations = {column:operation for column, operation in {
+                "Open":"first", "High":"max", "Low":"min", "Close":"last", "Volume":"sum",
+            }.items() if column in hourly.columns}
+            history = hourly.resample(
+                f"{hours}h", origin="start_day", offset="9h30min", label="left", closed="left",
+            ).agg(aggregations).dropna(subset=["Close"])
+        else:
+            provider_interval = provider_intervals.get(interval)
+            if provider_interval is None:
+                return pd.DataFrame(), f"Unsupported chart interval: {interval}."
+            history = ticker.history(start=intraday_start, end=intraday_end, interval=provider_interval,
+                                     auto_adjust=True, prepost=False)
+        if history.empty:
+            return pd.DataFrame(), f"Yahoo Finance returned no {interval} chart data for {symbol}."
+        return history, None
+    except Exception as exc:
+        return pd.DataFrame(), f"{type(exc).__name__}: {str(exc)[:180]}"
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -581,29 +619,53 @@ with st.container(border=True):
     left, right = st.columns([1.55, 1])
     with left:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
-        chart_controls = st.columns([3.1, 1.25, 1.25, 1.2])
+        interval_options = ["15 minute", "30 minute", "1 hour", "2 hours", "12 hours", "1 day"]
+        chart_controls = st.columns([2.8, 1.05, 1.25, 1.45, 1.15])
+        with chart_controls[2]:
+            chart_interval = st.selectbox("Interval", interval_options, index=5, key="market_chart_interval")
+        chart_window_options = (["1D", "5D", "1M", "2M", "Max"] if chart_interval != "1 day"
+                                else ["1M", "3M", "6M", "1Y", "2Y", "5Y", "Max"])
+        default_window = "6M" if chart_interval == "1 day" else "5D"
+        if st.session_state.get("market_chart_range") not in chart_window_options:
+            st.session_state["market_chart_range"] = default_window
+        average_unit = "day" if chart_interval == "1 day" else "bar"
+        average_options = [f"20 {average_unit}", f"50 {average_unit}", f"200 {average_unit}"]
+        default_averages = average_options[:2]
+        if not set(st.session_state.get("market_chart_averages", default_averages)).issubset(average_options):
+            st.session_state["market_chart_averages"] = default_averages
+
         with chart_controls[0]:
-            chart_window = st.radio("Range", ["1M", "3M", "6M", "1Y", "2Y"], index=2,
+            chart_window = st.radio("Range", chart_window_options, index=chart_window_options.index(default_window),
                                     horizontal=True, label_visibility="collapsed", key="market_chart_range")
         with chart_controls[1]:
             chart_type = st.selectbox("Chart style", ["Candles", "Line"], key="market_chart_style")
-        with chart_controls[2]:
-            chart_averages = st.multiselect("Averages", ["20D", "50D", "200D"],
-                                            default=["20D", "50D"], key="market_chart_averages")
         with chart_controls[3]:
+            chart_averages = st.multiselect("Averages", average_options,
+                                            default=default_averages, key="market_chart_averages")
+        with chart_controls[4]:
             open_fullscreen = st.button("⛶ Fullscreen", key="market_chart_open_fullscreen", use_container_width=True)
-        st.markdown(f'<div class="smallcaps">Price action · {chart_window} · {chart_type.lower()}</div>', unsafe_allow_html=True)
-        price_figure = price_chart(
-            history, selected, light_mode=LIGHT_THEME, chart_type=chart_type,
-            window=chart_window, overlays=chart_averages,
-        )
-        st.plotly_chart(
-            price_figure, use_container_width=True, key="market_chart_main",
-            config={"displayModeBar":True, "displaylogo":False, "scrollZoom":True,
-                    "responsive":True, "modeBarButtonsToAdd":["drawline", "drawopenpath", "eraseshape"]},
-        )
-        if open_fullscreen:
-            show_fullscreen_chart(price_figure, selected)
+        st.markdown(f'<div class="smallcaps">Price action · {chart_window} · {chart_interval} · {chart_type.lower()}</div>', unsafe_allow_html=True)
+        with st.spinner(f"Loading {chart_interval} chart data for {selected}…"):
+            if chart_interval == "1 day" and chart_window not in {"5Y", "Max"}:
+                chart_history, chart_error = history, None
+            else:
+                chart_history, chart_error = load_chart_history(selected, chart_interval)
+        if chart_history.empty:
+            st.warning(f"Chart data is unavailable: {chart_error or 'no rows were returned.'}")
+        else:
+            price_figure = price_chart(
+                chart_history, selected, light_mode=LIGHT_THEME, chart_type=chart_type,
+                window=chart_window, overlays=chart_averages, interval=chart_interval,
+            )
+            if chart_interval != "1 day":
+                st.caption("Intraday history is limited to about 60 days. 2-hour and 12-hour bars are aggregated from hourly data.")
+            st.plotly_chart(
+                price_figure, use_container_width=True, key="market_chart_main",
+                config={"displayModeBar":True, "displaylogo":False, "scrollZoom":True,
+                        "responsive":True, "modeBarButtonsToAdd":["drawline", "drawopenpath", "eraseshape"]},
+            )
+            if open_fullscreen:
+                show_fullscreen_chart(price_figure, selected)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown('<div class="panel"><div class="smallcaps">Market read</div>', unsafe_allow_html=True)
@@ -973,21 +1035,21 @@ with st.container(border=True):
 st.markdown('<div id="headlines" class="section-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     st.markdown("## Headlines & sentiment")
-    st.markdown('<div class="sub">Financial phrases, weighted polarity terms and negation checks drive each Bullish / Bearish tag. Low signal means the headline gives limited directional evidence.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub">Headlines are labeled Bullish, Bearish, or Neutral. Neutral means the title has weak, conflicting, broad-market, or unrelated evidence for the selected company.</div>', unsafe_allow_html=True)
     with st.expander("How the headline classifier works and what the research says"):
-        st.markdown("The lightweight local classifier scores finance-specific phrases such as **beats estimates**, **cuts guidance**, and **shares fall**, then checks for nearby negation such as **not**, **failed to**, or **denied**. Signal strength depends on how much evidence appears and how clearly one side outweighs the other; it is not a calibrated probability. A score tie is forced to **Bearish · Low signal** to keep a binary display; that tie-break is not evidence that the story is bad news.")
-        st.markdown("This follows the finance-specific vocabulary idea behind the [Loughran–McDonald dictionary](https://sraf.nd.edu/loughranmcdonald-master-dictionary/) and adds phrase and negation rules. Research on [FinBERT](https://arxiv.org/abs/1908.10063) finds finance-domain contextual models outperform earlier methods on financial sentiment datasets; this app uses a transparent rule set, not a trained FinBERT model. [Negation scope research](https://www.sciencedirect.com/science/article/abs/pii/S0167923616300823) also supports treating negation as part of financial headline interpretation.")
+        st.markdown("**Bullish** and **Bearish** require a clear directional score plus company-related context. **Neutral** is used when a headline is generic market coverage, does not clearly relate to the selected company, contains only weak wording, or has conflicting positive and negative cues. A single word such as *warning*, *probe*, or *recall* no longer automatically makes a story bearish. Nearby negation is checked for phrases such as **not beating estimates** or **approval denied**. Signal strength is a heuristic, not a probability or a forecast.")
+        st.markdown("Financial language depends on context: [Loughran and McDonald’s research](https://onlinelibrary.wiley.com/doi/10.1111/j.1540-6261.2010.01625.x) found general-purpose negative word lists misclassify many terms in financial texts. [FinBERT](https://arxiv.org/abs/1908.10063) uses finance-trained context and three sentiment classes; Market Lens uses a transparent local ruleset, not a trained FinBERT model, so ambiguous headlines are now explicitly left Neutral.")
     if not news:
         st.info("No recent headlines were returned for this symbol.")
     else:
-        positive = negative = low_signal = 0
+        positive = negative = neutral = low_signal = 0
         parsed = []
         for item in news:
             content = (item.get("content") or item) if isinstance(item, dict) else {}
             title = content.get("title") or item.get("title") or "Untitled story"
-            analysis = sentiment(title)
+            analysis = sentiment(title, symbol=selected, company_name=stats.get("name"))
             label = analysis["label"]
-            positive += label == "Bullish"; negative += label == "Bearish"
+            positive += label == "Bullish"; negative += label == "Bearish"; neutral += label == "Neutral"
             low_signal += analysis["confidence"] == "Low"
             provider = content.get("provider", {}) or {}
             publisher = provider.get("displayName") or item.get("publisher") or "News source"
@@ -1000,12 +1062,17 @@ with st.container(border=True):
             else:
                 date = str(ts)[:16] if ts else "Recent"
             parsed.append((title, label, analysis["confidence"], analysis["reason"], publisher, date, link, news_topic(title)))
-        a, b, c = st.columns(3)
+        a, b, c, d = st.columns(4)
         a.metric("Bullish headlines", positive)
         b.metric("Bearish headlines", negative)
-        c.metric("Low signal", low_signal, help="Binary label has weak or conflicting headline evidence.")
-        for title, label, confidence, reason, publisher, date, link, topic in parsed:
-            badge = "bull" if label == "Bullish" else "bear"
+        c.metric("Neutral headlines", neutral, help="Weak, mixed, broad-market, or unrelated headlines are not forced into a bullish or bearish label.")
+        d.metric("Low signal", low_signal, help="Low means the title provides limited directional evidence; it does not indicate bearishness.")
+        sentiment_filter = st.selectbox("Show headlines", ["All", "Bullish", "Bearish", "Neutral"], key="headline_sentiment_filter")
+        visible_headlines = [entry for entry in parsed if sentiment_filter == "All" or entry[1] == sentiment_filter]
+        if not visible_headlines:
+            st.info(f"No {sentiment_filter.lower()} headlines were returned for this ticker.")
+        for title, label, confidence, reason, publisher, date, link, topic in visible_headlines:
+            badge = {"Bullish":"bull", "Bearish":"bear", "Neutral":"neutral"}[label]
             confidence_badge = "low" if confidence == "Low" else badge
             safe_link = link if urlparse(link).scheme in ("http", "https") else "#"
             safe_link = html.escape(safe_link, quote=True)
