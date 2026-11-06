@@ -4,6 +4,7 @@ import html
 import os
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -308,6 +309,14 @@ def load_snapshot(symbol: str):
     return YahooFinanceProvider().history(symbol, period="2y", interval="1d")
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_analyst_recommendations(symbol: str):
+    try:
+        return yf.Ticker(symbol).get_recommendations_summary()
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def load_chart_history(symbol: str, interval: str) -> tuple[pd.DataFrame, str | None]:
     """Load chart-specific bars without shortening the snapshot's daily history."""
@@ -423,7 +432,7 @@ def load_industry_companies(industry_key: str) -> tuple[pd.DataFrame, str | None
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def rate_industry_companies(symbols: tuple[str, ...]) -> dict[str, str]:
-    """Apply the same technical screen used by the selected-ticker snapshot."""
+    """Use analyst consensus as the headline rating, with a technical fallback."""
     if not symbols:
         return {}
     try:
@@ -432,14 +441,19 @@ def rate_industry_companies(symbols: tuple[str, ...]) -> dict[str, str]:
     except Exception:
         return {symbol:"Unavailable" for symbol in symbols}
 
+    def fetch_recommendations(symbol: str):
+        return load_analyst_recommendations(symbol)
+
+    with ThreadPoolExecutor(max_workers=min(8, len(symbols))) as executor:
+        recommendation_frames = list(executor.map(fetch_recommendations, symbols))
     ratings = {}
-    for symbol in symbols:
+    for symbol, recommendations in zip(symbols, recommendation_frames):
         result = histories.get(symbol)
         if result is None or result.data.empty:
             ratings[symbol] = "Unavailable"
             continue
         try:
-            ratings[symbol] = analyze(result.data, {}, None, benchmark).get("rating", "Unavailable")
+            ratings[symbol] = analyze(result.data, {}, None, benchmark, recommendations).get("rating", "Unavailable")
         except Exception:
             ratings[symbol] = "Unavailable"
     return ratings
@@ -575,7 +589,7 @@ try:
         payload = load_market_data(selected)
         context = load_market_context()
     history, info, news = payload["history"], payload["info"], payload["news"]
-    stats = analyze(history, info, payload["options_move"], context.get("SPY"))
+    stats = analyze(history, info, payload["options_move"], context.get("SPY"), payload.get("recommendations"))
 except Exception as exc:
     st.error(str(exc))
     st.stop()
@@ -608,7 +622,9 @@ with st.container(border=True):
          "Latest adjusted daily closing price returned by the provider. Today's change compares it with the prior available daily close."),
         ("30 day expected move", f"±{stats['move']*100:.1f}%" if np.isfinite(stats['move']) else "Unavailable", stats["move_source"], move_explanation),
         ("Trend read", stats["state"], trend_note, trend_explanation(stats)),
-        ("Signal rating", stats["rating"], f"{stats['constructive_checks']} constructive · {stats['caution_checks']} caution checks", rating_explanation(stats)),
+        ("Signal rating", stats["rating"],
+         f"{stats['analyst_count']} analyst ratings" if stats.get("analyst_rating") else f"Technical fallback · {stats['constructive_checks']} constructive · {stats['caution_checks']} caution",
+         rating_explanation(stats)),
     ]
     for col, (label, value, note, explanation) in zip(cols, metrics):
         safe_label = html.escape(label)
@@ -770,7 +786,7 @@ with st.container(border=True):
                     [company_ratings.get(str(symbol).strip().upper(), "Unavailable") for symbol in company_display.index],
                 )
                 st.dataframe(company_display, use_container_width=True)
-                st.caption("Market Lens rating uses the same technical checks as the ticker snapshot. Unavailable means the required price history or benchmark data was incomplete. Industry listings are Yahoo Finance’s top-performing and top-growth companies, not a complete exchange-wide security master.")
+                st.caption("Market Lens rating uses available Wall Street analyst consensus (at least 3 ratings), with the same technical screen as the snapshot as a fallback. Unavailable means the required price history or benchmark data was incomplete. Industry listings are Yahoo Finance’s top-performing and top-growth companies, not a complete exchange-wide security master.")
                 company_frame = companies.reset_index()
                 symbol_column = next((col for col in company_frame.columns if str(col).lower() in ("symbol", "ticker")), None)
                 name_column = next((col for col in company_frame.columns if str(col).lower() in ("name", "company", "shortname")), None)
@@ -1089,7 +1105,9 @@ with st.container(border=True):
             snapshot = snapshot_result.data
             if snapshot.empty:
                 raise ValueError(snapshot_result.warning or "No price history")
-            s = stats if symbol == selected else analyze(snapshot, {}, None, context.get("SPY"))
+            s = stats if symbol == selected else analyze(
+                snapshot, {}, None, context.get("SPY"), load_analyst_recommendations(symbol)
+            )
             profile = {"name":stats["name"],"sector":info.get("sector") or "Unclassified","industry":info.get("industry") or "Unclassified"} if symbol == selected else load_profile(symbol)
             rows.append({"Ticker":symbol,"Company":profile["name"],"Sector":profile["sector"],"Industry":profile["industry"],"Last":s["last"],"Day":s["change"]/100,"30d range":s["move"],"Trend":s["state"],"Rating":s["rating"],"As of":snapshot_result.last_observation or "unavailable","Data status":snapshot_result.status,"Data warning":snapshot_result.warning or ""})
         except Exception:

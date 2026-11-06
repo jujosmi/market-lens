@@ -149,9 +149,37 @@ def _macd(prices: pd.Series, minimum_observations: int = 35) -> tuple[float, flo
     return float(line.iloc[-1]), float(signal.iloc[-1])
 
 
+def analyst_consensus(recommendations: pd.DataFrame | None) -> dict:
+    """Summarize the latest Yahoo analyst recommendation counts, when usable."""
+    unavailable = {"rating":None, "count":0, "score":float("nan"), "period":None}
+    if not isinstance(recommendations, pd.DataFrame) or recommendations.empty:
+        return unavailable
+    frame = recommendations.copy()
+    columns = {str(column).strip().casefold():column for column in frame.columns}
+    names = ("strongbuy", "buy", "hold", "sell", "strongsell")
+    if any(name not in columns for name in names):
+        return unavailable
+    # Prefer the current-month analyst distribution; otherwise use the newest row.
+    current = next((index for index in frame.index if str(index).strip().casefold() in {"0m", "current", "now"}), None)
+    row = frame.loc[current] if current is not None else frame.iloc[0]
+    if isinstance(row, pd.DataFrame):
+        row = row.iloc[0]
+    counts = {}
+    for name in names:
+        value = pd.to_numeric(pd.Series([row[columns[name]]]), errors="coerce").iloc[0]
+        counts[name] = max(0, int(value)) if pd.notna(value) else 0
+    total = sum(counts.values())
+    if total < 3:
+        return {**unavailable, "count":total}
+    score = (2 * counts["strongbuy"] + counts["buy"] - counts["sell"] - 2 * counts["strongsell"]) / total
+    rating = "Buy" if score >= 0.25 else "Sell" if score <= -0.25 else "Hold"
+    return {"rating":rating, "count":total, "score":float(score), "period":str(current if current is not None else frame.index[0])}
+
+
 def analyze(history: pd.DataFrame, info: dict | None = None,
             options_move: float | None = None,
-            benchmark: pd.DataFrame | None = None) -> dict:
+            benchmark: pd.DataFrame | None = None,
+            recommendations: pd.DataFrame | None = None) -> dict:
     """Build indicator values and an explainable rating from valid history only."""
     info = info or {}
     close = close_series(history)
@@ -216,7 +244,12 @@ def analyze(history: pd.DataFrame, info: dict | None = None,
     caution_count = sum(value is True for value in caution_values)
     checks_complete = all(value is not None for value in constructive_values + caution_values)
     balance = constructive_count - caution_count
-    rating = ("Buy" if balance >= 2 else "Sell" if balance <= -2 else "Hold") if checks_complete else "Unavailable"
+    technical_rating = ("Buy" if balance >= 2 else "Sell" if balance <= -2 else "Hold") if checks_complete else "Unavailable"
+    consensus = analyst_consensus(recommendations)
+    # Analyst consensus is the headline rating when at least three analysts report;
+    # technical checks remain visible as context rather than overruling it on a dip.
+    rating = consensus["rating"] or technical_rating
+    rating_source = "Wall Street analyst consensus" if consensus["rating"] else "Market Lens technical screen"
 
     if np.isfinite(sma200):
         above50_200 = last > sma50 > sma200 if np.isfinite(sma50) else False
@@ -243,7 +276,10 @@ def analyze(history: pd.DataFrame, info: dict | None = None,
         "current_drawdown":current_drawdown * 100 if np.isfinite(current_drawdown) else current_drawdown,
         "high52":high52, "low52":low52, "relative_volume":relative_volume,
         "returns":returns, "beta":beta_value, "beta_observations":beta_observations,
-        "rating":rating, "constructive_checks":constructive_count,
+        "rating":rating, "rating_source":rating_source, "technical_rating":technical_rating,
+        "analyst_rating":consensus["rating"], "analyst_count":consensus["count"],
+        "analyst_score":consensus["score"], "analyst_period":consensus["period"],
+        "constructive_checks":constructive_count,
         "caution_checks":caution_count, "rating_checks_complete":checks_complete,
         "rating_check_details":rating_checks, "observations":len(close),
     }

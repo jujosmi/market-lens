@@ -6,12 +6,20 @@ import numpy as np
 
 
 def rating_explanation(stats: dict) -> str:
-    """Explain the technical rating, its threshold, and its difference from consensus."""
+    """Explain whether the displayed rating comes from analysts or technical data."""
     checks = stats.get("rating_check_details")
     constructive = int(stats.get("constructive_checks", 0))
     caution = int(stats.get("caution_checks", 0))
     net = constructive - caution
     checks_complete = stats.get("rating_checks_complete", stats.get("rating") != "Unavailable")
+    if stats.get("analyst_rating"):
+        technical = stats.get("technical_rating", "Unavailable")
+        context = (f" The technical screen is {technical} ({constructive}/5 constructive and {caution}/5 caution checks)."
+                   if checks_complete else " Technical checks are incomplete, so they do not change the analyst rating.")
+        return (f"{stats['analyst_rating']} based on the latest available Wall Street analyst consensus "
+                f"({stats.get('analyst_count', 0)} analyst ratings). The consensus is the headline rating; "
+                f"a price dip or weak trend alone does not turn it into a Sell.{context} "
+                "Analyst opinions can be stale or differ from your time horizon; this is research context, not personalized advice.")
     if checks and not checks_complete:
         missing = [check["label"] for check in checks if check["passed"] is None]
         sample = "; ".join(missing[:2])
