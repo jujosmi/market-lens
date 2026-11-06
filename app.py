@@ -192,11 +192,6 @@ def add_symbol_to_watchlist(symbol: str) -> None:
         st.session_state["focus_ticker"] = normalized
 
 
-def select_industry(industry_key: str) -> None:
-    """Persist an industry button selection so the directory reruns on that industry."""
-    st.session_state["industry_directory_selection"] = industry_key
-
-
 def persist_watchlist_input() -> None:
     symbols = [part.strip().upper() for part in st.session_state.get("watchlist_input", "").split(",") if part.strip()]
     save_user_watchlist(symbols[:MAX_WATCHLIST_SIZE])
@@ -581,12 +576,15 @@ with st.container(border=True):
                     industry_columns = st.columns(3)
                     for index, option in enumerate(visible_industries):
                         with industry_columns[index % len(industry_columns)]:
-                            st.button(
+                            if st.button(
                                 option["label"], key=f"industry_pick_{option['key']}",
                                 type="primary" if option["key"] == industry_key else "secondary",
-                                use_container_width=True, on_click=select_industry,
-                                args=(option["key"],),
-                            )
+                                use_container_width=True,
+                            ):
+                                # Read the button's return value directly so the
+                                # selected company list updates in this rerun too.
+                                industry_key = option["key"]
+                                st.session_state["industry_directory_selection"] = industry_key
             else:
                 st.info("No industries match that search. Try a different industry or sector name.")
 
