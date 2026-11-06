@@ -463,6 +463,22 @@ def load_upcoming_events(start_date: date, end_date: date,
     return results
 
 
+@st.dialog("Fullscreen market chart")
+def show_fullscreen_chart(figure, symbol: str) -> None:
+    st.markdown(
+        "<style>div[role='dialog']{width:96vw!important;max-width:96vw!important;}"
+        "div[role='dialog'] [data-testid='stVerticalBlock']{gap:.6rem;}</style>",
+        unsafe_allow_html=True,
+    )
+    st.caption(f"{symbol} · interactive price, moving-average, and volume chart")
+    figure.update_layout(height=760)
+    st.plotly_chart(
+        figure, use_container_width=True, key="market_chart_fullscreen_view",
+        config={"displayModeBar":True, "displaylogo":False, "scrollZoom":True,
+                "responsive":True, "modeBarButtonsToAdd":["drawline", "drawopenpath", "eraseshape"]},
+    )
+
+
 with st.sidebar:
     st.markdown('<a class="jujosmi-home-link" href="https://jujosmi.com" target="_blank" rel="noopener noreferrer" aria-label="Visit jujosmi.com"><img src="app/static/jujosmi-logo-simple-shadow.png" alt="Jujosmi"></a>', unsafe_allow_html=True)
     st.markdown('<div class="brand">◉ &nbsp; MARKET LENS</div>', unsafe_allow_html=True)
@@ -564,14 +580,30 @@ with st.container(border=True):
     st.write("")
     left, right = st.columns([1.55, 1])
     with left:
-        st.markdown('<div class="panel"><div class="smallcaps">Price action · 6 months</div>', unsafe_allow_html=True)
-        price_figure = price_chart(history, selected)
-        if LIGHT_THEME:
-            price_figure.update_traces(line={"color":"#087f63"}, selector={"name":selected})
-            price_figure.update_traces(line={"color":"#536ac7"}, selector={"name":"20 day average"})
-            price_figure.update_layout(font={"color":"#61756f","family":"Manrope"})
-            price_figure.update_yaxes(gridcolor="#e1e9e5")
-        st.plotly_chart(price_figure, use_container_width=True, config={"displayModeBar":False})
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        chart_controls = st.columns([3.1, 1.25, 1.25, 1.2])
+        with chart_controls[0]:
+            chart_window = st.radio("Range", ["1M", "3M", "6M", "1Y", "2Y"], index=2,
+                                    horizontal=True, label_visibility="collapsed", key="market_chart_range")
+        with chart_controls[1]:
+            chart_type = st.selectbox("Chart style", ["Candles", "Line"], key="market_chart_style")
+        with chart_controls[2]:
+            chart_averages = st.multiselect("Averages", ["20D", "50D", "200D"],
+                                            default=["20D", "50D"], key="market_chart_averages")
+        with chart_controls[3]:
+            open_fullscreen = st.button("⛶ Fullscreen", key="market_chart_open_fullscreen", use_container_width=True)
+        st.markdown(f'<div class="smallcaps">Price action · {chart_window} · {chart_type.lower()}</div>', unsafe_allow_html=True)
+        price_figure = price_chart(
+            history, selected, light_mode=LIGHT_THEME, chart_type=chart_type,
+            window=chart_window, overlays=chart_averages,
+        )
+        st.plotly_chart(
+            price_figure, use_container_width=True, key="market_chart_main",
+            config={"displayModeBar":True, "displaylogo":False, "scrollZoom":True,
+                    "responsive":True, "modeBarButtonsToAdd":["drawline", "drawopenpath", "eraseshape"]},
+        )
+        if open_fullscreen:
+            show_fullscreen_chart(price_figure, selected)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown('<div class="panel"><div class="smallcaps">Market read</div>', unsafe_allow_html=True)
