@@ -6,6 +6,8 @@ Market Lens is a local stock watchlist and research dashboard. It helps you obse
 
 Market Lens includes a coordinated light palette and dark palette for the dashboard, sidebar, cards, chart, and floating terminology chat. Use Streamlit's app menu (⋮) and choose **Light**, **Dark**, or **System**. The default is dark.
 
+The Streamlit toolbar stays available so its appearance menu works. The main app entry point is `app.py`; `streamlit_app.py` is a compatibility wrapper for hosts that use Streamlit's default filename.
+
 ## Run locally
 
 ```powershell
@@ -60,7 +62,13 @@ Market history is retrieved through `market_lens/providers.py`, which wraps the 
 
 `market_lens/charts.py` holds chart construction; `market_lens/config.py` holds shared settings; `market_lens/storage.py` stores the local watchlist; and `market_lens/news.py` handles headline scoring. The Streamlit UI remains in `app.py`. The watchlist is a single-user local JSON file, not synced or encrypted.
 
-For a shared hosted deployment, set `MARKET_LENS_HOSTED = "true"` in Streamlit secrets. That keeps each watchlist in its visitor's session instead of using a server-wide file. Hosted session watchlists reset when the browser session ends; this setting is not an authentication system.
+For a public deployment, set both `MARKET_LENS_PUBLIC = "true"` and `MARKET_LENS_HOSTED = "true"` in the host environment or Streamlit secrets. The app stops with an error if a deployment declares itself public without enabling session-isolated watchlists; this prevents the local shared JSON watchlist from being used by mistake. `MARKET_LENS_HOSTED` keeps each watchlist in its visitor's session instead of using a server-wide file. Hosted session watchlists reset when the browser session ends; this setting is not an authentication system. The repository does not contain production secrets, so the deployed values must be confirmed in the hosting dashboard.
+
+The selected ticker's **Refresh data** button invalidates only that ticker's cached profile, history, recommendations, and chart intervals. **Refresh pulse** clears the shared market-context cache separately. Both use Streamlit's documented per-function cache clearing behavior; the industry directory and calendar are not cleared by a ticker refresh.
+
+## Runtime and dependencies
+
+The supported interpreter is Python 3.14, recorded in `.python-version` and constrained in `pyproject.toml`. `requirements.txt` mirrors the project dependency ranges for Streamlit hosting. Keep those dependency declarations aligned when updating packages.
 
 ## Put it on a Cloudflare website
 
@@ -77,5 +85,7 @@ The offline unit tests use synthetic or fixed data and do not need live market a
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+To smoke-check the compatibility entry point in a browser, run `py -m streamlit run streamlit_app.py`, change the selected ticker, edit the watchlist, press **Refresh data** and **Refresh pulse**, and switch between Light, Dark, and System in the app menu. Confirm each interaction reruns the dashboard and keeps the updated state. `app.py` remains the canonical deployment entry point.
 
 This dashboard is informational and is not financial advice.

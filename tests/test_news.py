@@ -12,7 +12,9 @@ class HeadlineClassificationTests(unittest.TestCase):
 
     def test_negation_flips_phrase_polarity(self):
         result = classify_headline("Company does not beat estimates")
-        self.assertEqual(result["label"], "Bearish")
+        self.assertEqual(result["label"], "Neutral")
+        self.assertEqual(result["bear_score"], 1.1)
+        self.assertEqual(result["reason"], "no strong company-specific directional evidence")
 
     def test_clause_boundary_does_not_leak_negation(self):
         result = classify_headline("No warning. Shares surge after results")

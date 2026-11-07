@@ -1,6 +1,5 @@
-import streamlit as st
+"""Compatibility entry point; the canonical Streamlit application is app.py."""
 
-st.title("🎈 My new app")
-st.write(
-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
-)
+from app import run_app
+
+run_app()
