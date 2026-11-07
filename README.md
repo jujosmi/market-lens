@@ -78,6 +78,8 @@ The VIX is an options-implied measure of expected S&P 500 volatility over about 
 
 Company, analyst, news, industry and event coverage comes mainly from Yahoo Finance via the community-maintained [`yfinance`](https://ranaroussi.github.io/yfinance/) package. It may be delayed, incomplete, rate limited or unavailable, and Yahoo may change access. IPO and earnings dates can change; an earnings release date is not necessarily an earnings-call time. SEC filing links are third-party links when returned; [SEC EDGAR](https://www.sec.gov/search-filings/edgar-application-programming-interfaces) is the primary record for U.S. filings. Confirm important details with original sources.
 
+Discovery takes industry keys from Yahoo's live `Sector.industries` response when available. Locally listed categories are only candidates: their keys must appear in yfinance's shipped key list and are checked against Yahoo's returned industry name and sector before use. If the industry listings fail, the app can fall back to Yahoo sector top companies, but includes a symbol only when Yahoo's profile confirms the selected industry key or exact industry and sector labels. Failed provider requests are logged; unverified or missing classifications are not filled in.
+
 ## Tests
 
 The offline unit tests use synthetic or fixed data and do not need live market access:

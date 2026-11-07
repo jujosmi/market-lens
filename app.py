@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
 import re
-import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
@@ -16,9 +16,10 @@ import yfinance as yf
 try:
     # yfinance ships this mapping locally, so the industry directory can still
     # render and be searched when Yahoo's sector endpoint is temporarily down.
-    from yfinance.const import SECTOR_INDUSTY_MAPPING
+    from yfinance.const import SECTOR_INDUSTY_MAPPING, SECTOR_INDUSTY_MAPPING_LC
 except Exception:
     SECTOR_INDUSTY_MAPPING = {}
+    SECTOR_INDUSTY_MAPPING_LC = {}
 from market_lens.analytics import analyze
 from market_lens.assistant import ask_ai, floating_chat, get_api_key
 from market_lens.charts import price_chart
@@ -27,10 +28,13 @@ from market_lens.config import (
     hosted_watchlist_mode, public_watchlist_guard,
 )
 from market_lens.cache_policy import clear_selected_ticker_caches as invalidate_ticker_caches
+from market_lens.discovery import canonical_local_industry_rows, fetch_industry_companies, industry_identity
 from market_lens.explanations import rating_explanation, trend_explanation
 from market_lens.news import classify_headline as sentiment, classify_news_topic as news_topic
 from market_lens.providers import YahooFinanceProvider
 from market_lens.storage import load_watchlist, save_watchlist
+
+LOGGER = logging.getLogger("market_lens.app")
 
 def configure_app() -> None:
     global ACTIVE_THEME, LIGHT_THEME, THEME_COLORS, HOSTED_MODE
@@ -400,54 +404,52 @@ def load_industry_index() -> pd.DataFrame:
             sector = yf.Sector(sector_key)
             industries = sector.industries
             if not isinstance(industries, pd.DataFrame) or industries.empty:
+                LOGGER.info("Yahoo Finance returned an empty industry directory for sector key %r", sector_key)
                 continue
             sector_name = sector.name or sector_labels.get(sector_key, sector_key.replace("-", " ").title())
             for idx, row in industries.iterrows():
                 industry_key = row.get("key") or row.get("industryKey") or str(idx)
                 industry_name = row.get("name") or str(industry_key).replace("-", " ").title()
+                if not str(industry_key).strip():
+                    LOGGER.warning("Yahoo Finance returned an industry without a canonical key for sector %r", sector_key)
+                    continue
                 rows.append({"industry_key":str(industry_key), "industry":str(industry_name),
                              "sector_key":sector_key, "sector":str(sector_name), "source":"Yahoo Finance"})
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("Yahoo Finance sector industries request failed for %r (%s): %s",
+                           sector_key, type(exc).__name__, str(exc)[:240])
             continue
 
-    # Keep the directory searchable if the live sector listing is unavailable.
-    for sector_key in SECTOR_KEYS:
-        sector_name = sector_labels.get(sector_key, sector_key.replace("-", " ").title())
-        for industry_name in SECTOR_INDUSTY_MAPPING.get(sector_name, set()):
-            name = str(industry_name).strip()
-            industry_key = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").casefold()
-            industry_key = re.sub(r"[^a-z0-9]+", "-", industry_key).strip("-")
-            already_listed = any(
-                item["industry"].casefold() == name.casefold()
-                or item["industry_key"].casefold() == industry_key
-                for item in rows
-            )
-            if name and not already_listed:
-                rows.append({"industry_key":industry_key, "industry":name,
-                             "sector_key":sector_key, "sector":sector_name, "source":"Built-in directory"})
+    # The package supplies display names and candidate keys. Match each name
+    # against its key list; company requests verify the key against live metadata.
+    local_rows = canonical_local_industry_rows(
+        SECTOR_INDUSTY_MAPPING, SECTOR_INDUSTY_MAPPING_LC, sector_labels,
+    )
+    known_industries = {
+        (item["sector_key"].casefold(), industry_identity(item["industry"]))
+        for item in rows
+    }
+    rows.extend(
+        item for item in local_rows
+        if (item["sector_key"].casefold(), industry_identity(item["industry"])) not in known_industries
+    )
 
     return pd.DataFrame(rows).drop_duplicates(subset=["industry_key"]) if rows else pd.DataFrame(columns=["industry_key","industry","sector_key","sector","source"])
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_industry_companies(industry_key: str) -> tuple[pd.DataFrame, str | None]:
-    try:
-        industry = yf.Industry(industry_key)
-        frames = []
-        for list_name, attribute in (("Top performing", "top_performing_companies"),
-                                     ("Top growth", "top_growth_companies")):
-            companies = getattr(industry, attribute, None)
-            if isinstance(companies, pd.DataFrame) and not companies.empty:
-                frame = companies.copy()
-                frame["Company list"] = list_name
-                frames.append(frame)
-        if not frames:
-            return pd.DataFrame(), None
-        combined = pd.concat(frames, axis=0)
-        combined = combined.loc[~combined.index.astype(str).duplicated(keep="first")]
-        return combined, None
-    except Exception as exc:
-        return pd.DataFrame(), f"{type(exc).__name__}: {str(exc)[:180]}"
+def load_industry_companies(industry_key: str, industry_source: str, sector_key: str,
+                            industry_name: str, sector_name: str) -> tuple[pd.DataFrame, str | None]:
+    """Use canonical Yahoo lists, then a sector list filtered by Yahoo profile keys."""
+    canonical_keys = tuple(
+        key for industry_keys in SECTOR_INDUSTY_MAPPING_LC.values()
+        for key in industry_keys
+    )
+    return fetch_industry_companies(
+        industry_key, industry_source, sector_key, industry_name, sector_name,
+        industry_factory=yf.Industry, sector_factory=yf.Sector, ticker_factory=yf.Ticker,
+        canonical_keys=canonical_keys, valid_sector_keys=SECTOR_KEYS,
+    )
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -750,7 +752,8 @@ def run_app() -> None:
                 st.caption("Yahoo Finance supplies canonical industry keys; a local directory keeps categories searchable if that lookup is unavailable.")
                 industry_options = [
                     {"label":f"{row.industry} · {row.sector}", "industry":str(row.industry),
-                     "sector":str(row.sector), "key":str(row.industry_key)}
+                     "sector":str(row.sector), "sector_key":str(row.sector_key),
+                     "key":str(row.industry_key), "source":str(row.source)}
                     for row in industry_index.itertuples()
                 ]
                 search_query = st.text_input(
@@ -789,13 +792,18 @@ def run_app() -> None:
                 industry_label = selected_option["label"]
                 st.markdown(f"**Selected industry:** {industry_label}")
                 with st.spinner(f"Loading companies in {selected_option['industry']}…"):
-                    companies, company_error = load_industry_companies(industry_key)
+                    companies, company_error = load_industry_companies(
+                        industry_key, selected_option["source"], selected_option["sector_key"],
+                        selected_option["industry"], selected_option["sector"],
+                    )
                 if companies.empty:
                     if company_error:
-                        st.warning(f"Yahoo Finance could not load companies for this industry: {company_error}")
+                        st.warning(company_error)
                     else:
-                        st.caption("Yahoo Finance returned no top-performing or top-growth companies for this industry.")
+                        st.caption("Yahoo Finance returned no company listings for this industry or its validated sector fallback.")
                 else:
+                    if company_error:
+                        st.warning(company_error)
                     company_display = companies.copy()
                     company_symbols = tuple(dict.fromkeys(
                         str(symbol).strip().upper() for symbol in companies.index
@@ -807,7 +815,7 @@ def run_app() -> None:
                         [company_ratings.get(str(symbol).strip().upper(), "Unavailable") for symbol in company_display.index],
                     )
                     st.dataframe(company_display, use_container_width=True)
-                    st.caption("Market Lens rating uses available Wall Street analyst consensus (at least 3 ratings), with the same technical screen as the snapshot as a fallback. Unavailable means the required price history or benchmark data was incomplete. Industry listings are Yahoo Finance’s top-performing and top-growth companies, not a complete exchange-wide security master.")
+                    st.caption("Company lists use Yahoo Finance's industry listings. If those are unavailable, Discovery shows only sector top companies whose Yahoo profile industryKey or exact industry and sector fields confirm the selected category. Market Lens ratings use analyst consensus (at least 3 ratings), then the snapshot's technical screen as fallback. Unavailable means required price history or benchmark data was incomplete.")
                     company_frame = companies.reset_index()
                     symbol_column = next((col for col in company_frame.columns if str(col).lower() in ("symbol", "ticker")), None)
                     name_column = next((col for col in company_frame.columns if str(col).lower() in ("name", "company", "shortname")), None)
