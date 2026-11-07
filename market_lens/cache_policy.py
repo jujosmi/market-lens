@@ -7,15 +7,19 @@ CHART_INTERVALS = ("15 minute", "30 minute", "1 hour", "2 hours", "12 hours", "1
 
 
 def selected_ticker_cache_entries(symbol: str) -> tuple[tuple[str, tuple], ...]:
-    """Return only cache keys owned by one ticker's snapshot and chart."""
+    """Return only cache keys owned by one ticker's snapshot, research, and chart."""
     ticker = str(symbol).strip().upper()
     if not ticker:
         return ()
     entries = [
         ("load_market_data", (ticker,)),
+        ("load_ticker_news", (ticker,)),
+        ("load_company_fundamentals", (ticker,)),
+        ("load_company_catalysts", (ticker,)),
         ("load_snapshot", (ticker,)),
         ("load_profile", (ticker,)),
         ("load_analyst_recommendations", (ticker,)),
+        ("load_analyst_recommendation_result", (ticker,)),
     ]
     entries.extend(("load_chart_history", (ticker, interval)) for interval in CHART_INTERVALS)
     return tuple(entries)

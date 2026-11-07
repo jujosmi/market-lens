@@ -4,6 +4,7 @@ import html
 import logging
 import os
 import re
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
@@ -32,6 +33,10 @@ from market_lens.discovery import canonical_local_industry_rows, fetch_industry_
 from market_lens.explanations import rating_explanation, trend_explanation
 from market_lens.news import classify_headline as sentiment, classify_news_topic as news_topic
 from market_lens.providers import YahooFinanceProvider
+from market_lens.research import (
+    analyst_target_summary, eps_revision_table, fundamentals_metric_table,
+    quarterly_statement_table, recommendation_distribution,
+)
 from market_lens.storage import load_watchlist, save_watchlist
 
 LOGGER = logging.getLogger("market_lens.app")
@@ -154,6 +159,16 @@ def as_float(value, default=np.nan):
         return default
 
 
+def tab_is_active(tab) -> bool:
+    """Return whether a state-tracked Streamlit tab is the selected tab."""
+    return bool(getattr(tab, "open", False))
+
+
+def load_tab_data_if_active(tab, loader, inactive_value=None):
+    """Avoid invoking provider work for a tab that is not currently open."""
+    return loader() if tab_is_active(tab) else inactive_value
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def search_tickers(query: str) -> list[dict]:
     query = query.strip()
@@ -231,6 +246,7 @@ def save_user_watchlist(symbols: list[str]) -> None:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_market_data(symbol: str) -> dict:
+    """Load inputs required by the selected-ticker snapshot and signal."""
     ticker = yf.Ticker(symbol)
     history_result = YahooFinanceProvider().history(symbol, period="2y", interval="1d")
     history = history_result.data
@@ -238,50 +254,37 @@ def load_market_data(symbol: str) -> dict:
         raise ValueError(history_result.warning or f"No price history returned for {symbol}. Check the ticker and try again.")
     optional_warnings = []
     try:
-        info = ticker.get_info()
+        raw_info = ticker.get_info()
     except Exception as exc:
+        LOGGER.warning("Yahoo Finance company profile request failed for %s (%s)",
+                       symbol, type(exc).__name__, exc_info=True)
+        raw_info = None
+        profile_status = "error"
+        optional_warnings.append("Company profile data could not be retrieved.")
+    else:
+        profile_status = "available"
+    if isinstance(raw_info, dict):
+        info = raw_info
+        if not info:
+            profile_status = "missing"
+            optional_warnings.append("Yahoo Finance returned no company profile data.")
+    elif raw_info is None and profile_status != "error":
         info = {}
-        optional_warnings.append(f"Company profile unavailable ({type(exc).__name__}).")
-    try:
-        news = ticker.get_news(count=12)
-    except Exception as exc:
-        news = []
-        optional_warnings.append(f"Recent headlines unavailable ({type(exc).__name__}).")
-    recommendations = None
-    earnings_dates = None
-    analyst_targets = None
-    eps_revisions = None
-    sec_filings = None
-    upgrades = None
-    quarterly_income = None
-    try:
-        recommendations = ticker.get_recommendations_summary()
-    except Exception:
-        pass
-    try:
-        earnings_dates = ticker.get_earnings_dates(limit=8)
-    except Exception:
-        pass
-    try:
-        analyst_targets = ticker.analyst_price_targets
-    except Exception:
-        pass
-    try:
-        eps_revisions = ticker.get_eps_revisions()
-    except Exception:
-        pass
-    try:
-        sec_filings = ticker.get_sec_filings()
-    except Exception:
-        pass
-    try:
-        upgrades = ticker.get_upgrades_downgrades()
-    except Exception:
-        pass
-    try:
-        quarterly_income = ticker.quarterly_income_stmt
-    except Exception:
-        pass
+        profile_status = "missing"
+        optional_warnings.append("Yahoo Finance returned no company profile data.")
+    else:
+        info = {}
+        if profile_status != "error":
+            profile_status = "malformed"
+            LOGGER.warning("Yahoo Finance company profile response had an unexpected type for %s: %s",
+                           symbol, type(raw_info).__name__)
+            optional_warnings.append("Company profile data was returned in an unsupported format.")
+    # These recommendations feed the visible snapshot rating, and options
+    # volatility feeds its expected-move card; retain both on the core path.
+    recommendation_result = load_analyst_recommendation_result(symbol)
+    recommendations = recommendation_result["data"]
+    if recommendation_result["status"] == "error":
+        optional_warnings.append(recommendation_result["message"])
     options_move = None
     options_expiry = None
     try:
@@ -305,10 +308,93 @@ def load_market_data(symbol: str) -> dict:
                 options_expiry = expiry
     except Exception:
         pass
-    return {"history": history, "history_result": history_result, "info": info, "news": news, "optional_warnings":optional_warnings, "options_move": options_move, "options_expiry": options_expiry,
-            "recommendations": recommendations, "earnings_dates": earnings_dates, "analyst_targets": analyst_targets,
-            "eps_revisions": eps_revisions, "sec_filings": sec_filings, "upgrades": upgrades,
-            "quarterly_income": quarterly_income}
+    return {"history": history, "history_result": history_result, "info": info,
+            "optional_warnings":optional_warnings, "options_move": options_move,
+            "options_expiry": options_expiry, "recommendations": recommendations,
+            "recommendation_status":recommendation_result["status"],
+            "recommendation_message":recommendation_result["message"],
+            "profile_status":profile_status}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_ticker_news(symbol: str) -> tuple[list[dict], str | None]:
+    """Fetch headlines only for the headline section, not the ticker snapshot."""
+    try:
+        result = yf.Ticker(symbol).get_news(count=12)
+    except Exception as exc:
+        LOGGER.warning("Yahoo Finance headlines request failed for %s (%s)",
+                       symbol, type(exc).__name__, exc_info=True)
+        return [], "Recent headlines could not be retrieved."
+    if result is None:
+        return [], None
+    if not isinstance(result, list):
+        LOGGER.warning("Yahoo Finance headlines response had an unexpected type for %s: %s",
+                       symbol, type(result).__name__)
+        return [], "Recent headlines were returned in an unsupported format."
+    return result, None
+
+
+def _provider_failure_message(label: str) -> str:
+    return f"{label} could not be retrieved from Yahoo Finance."
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_company_fundamentals(symbol: str) -> dict[str, object]:
+    """Load statement rows only when the Business & valuation tab is opened."""
+    try:
+        statement = yf.Ticker(symbol).quarterly_income_stmt
+    except Exception as exc:
+        LOGGER.warning("Yahoo Finance quarterly income statement request failed for %s (%s)",
+                       symbol, type(exc).__name__, exc_info=True)
+        return {"data":None, "status":"error",
+                "message":_provider_failure_message("Quarterly income statement data")}
+    if statement is None or isinstance(statement, pd.DataFrame) and statement.empty:
+        return {"data":None, "status":"missing", "message":None}
+    if not isinstance(statement, pd.DataFrame):
+        LOGGER.warning("Yahoo Finance quarterly income statement had an unexpected type for %s: %s",
+                       symbol, type(statement).__name__)
+        return {"data":None, "status":"malformed",
+                "message":"Quarterly income statement data was returned in an unsupported format."}
+    return {"data":statement, "status":"available", "message":None}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_company_catalysts(symbol: str) -> dict[str, object]:
+    """Load analyst, earnings, and filing research only when requested."""
+    ticker = yf.Ticker(symbol)
+    result: dict[str, object] = {
+        "earnings_dates":None, "analyst_targets":None, "eps_revisions":None,
+        "sec_filings":None, "upgrades":None, "_errors":{}, "_missing":[],
+    }
+    requests = (
+        ("earnings_dates", lambda: ticker.get_earnings_dates(limit=8), pd.DataFrame),
+        ("analyst_targets", lambda: ticker.analyst_price_targets, Mapping),
+        ("eps_revisions", ticker.get_eps_revisions, pd.DataFrame),
+        ("sec_filings", ticker.get_sec_filings, (pd.DataFrame, list, dict)),
+        ("upgrades", ticker.get_upgrades_downgrades, pd.DataFrame),
+    )
+    for key, fetch, expected_type in requests:
+        try:
+            value = fetch()
+        except Exception as exc:
+            LOGGER.warning("Yahoo Finance research request %s failed for %s (%s)",
+                           key, symbol, type(exc).__name__, exc_info=True)
+            result["_errors"][key] = _provider_failure_message(
+                {"earnings_dates":"Earnings dates", "analyst_targets":"Analyst targets",
+                 "eps_revisions":"EPS revisions", "sec_filings":"SEC filings",
+                 "upgrades":"Analyst rating changes"}[key]
+            )
+            continue
+        if value is None or (isinstance(value, (pd.DataFrame, dict, list)) and len(value) == 0):
+            result["_missing"].append(key)
+            continue
+        if not isinstance(value, expected_type):
+            LOGGER.warning("Yahoo Finance research response %s had an unexpected type for %s: %s",
+                           key, symbol, type(value).__name__)
+            result["_errors"][key] = f"{key.replace('_', ' ').capitalize()} data was returned in an unsupported format."
+            continue
+        result[key] = value
+    return result
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -321,12 +407,27 @@ def load_snapshot(symbol: str):
     return YahooFinanceProvider().history(symbol, period="2y", interval="1d")
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def load_analyst_recommendations(symbol: str):
+@st.cache_data(ttl=300, show_spinner=False)
+def load_analyst_recommendation_result(symbol: str) -> dict[str, object]:
     try:
-        return yf.Ticker(symbol).get_recommendations_summary()
-    except Exception:
-        return None
+        recommendations = yf.Ticker(symbol).get_recommendations_summary()
+    except Exception as exc:
+        LOGGER.warning("Yahoo Finance analyst recommendation request failed for %s (%s)",
+                       symbol, type(exc).__name__, exc_info=True)
+        return {"data":None, "status":"error",
+                "message":"Analyst recommendation data could not be retrieved."}
+    if recommendations is None or isinstance(recommendations, pd.DataFrame) and recommendations.empty:
+        return {"data":None, "status":"missing", "message":None}
+    if not isinstance(recommendations, pd.DataFrame) or recommendation_distribution(recommendations) is None:
+        LOGGER.warning("Yahoo Finance analyst recommendation response was malformed for %s", symbol)
+        return {"data":None, "status":"malformed",
+                "message":"Analyst recommendation data was returned in an unsupported format."}
+    return {"data":recommendations, "status":"available", "message":None}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_analyst_recommendations(symbol: str) -> pd.DataFrame | None:
+    return load_analyst_recommendation_result(symbol)["data"]
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -379,9 +480,13 @@ def clear_selected_ticker_data(symbol: str) -> None:
     """Clear cached data for one ticker without invalidating shared app caches."""
     cached_functions = {
         "load_market_data":load_market_data,
+        "load_ticker_news":load_ticker_news,
+        "load_company_fundamentals":load_company_fundamentals,
+        "load_company_catalysts":load_company_catalysts,
         "load_snapshot":load_snapshot,
         "load_profile":load_profile,
         "load_analyst_recommendations":load_analyst_recommendations,
+        "load_analyst_recommendation_result":load_analyst_recommendation_result,
         "load_chart_history":load_chart_history,
     }
     invalidate_ticker_caches(symbol, cached_functions)
@@ -483,35 +588,40 @@ def rate_industry_companies(symbols: tuple[str, ...]) -> dict[str, str]:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def load_upcoming_events(start_date: date, end_date: date,
-                         watchlist_symbols: tuple[str, ...] = ()) -> dict[str, object]:
+                         watchlist_symbols: tuple[str, ...] = (),
+                         sections: tuple[str, ...] = ("Earnings", "IPOs", "Splits", "Economic events")) -> dict[str, object]:
     results: dict[str, object] = {
         "Earnings":pd.DataFrame(), "IPOs":pd.DataFrame(), "Splits":pd.DataFrame(),
         "Economic events":pd.DataFrame(), "_errors":{}, "_earnings_fallback":False,
     }
     errors: dict[str, str] = {}
-    try:
-        calendar = yf.Calendars(start=start_date, end=end_date)
-    except Exception as exc:
-        calendar = None
-        errors["Calendar"] = f"{type(exc).__name__}: {str(exc)[:180]}"
+    requested = set(sections)
+    if requested:
+        try:
+            calendar = yf.Calendars(start=start_date, end=end_date)
+        except Exception as exc:
+            calendar = None
+            errors["Calendar"] = f"{type(exc).__name__}: {str(exc)[:180]}"
 
-    if calendar is not None:
-        requests = {
-            "Earnings":lambda:calendar.get_earnings_calendar(start=start_date, end=end_date, limit=100, filter_most_active=False),
-            "IPOs":lambda:calendar.get_ipo_info_calendar(start=start_date, end=end_date, limit=100),
-            "Splits":lambda:calendar.get_splits_calendar(start=start_date, end=end_date, limit=100),
-            "Economic events":lambda:calendar.get_economic_events_calendar(start=start_date, end=end_date, limit=100),
-        }
-        for label, fetch in requests.items():
-            try:
-                data = fetch()
-                results[label] = data if isinstance(data, pd.DataFrame) else pd.DataFrame()
-            except Exception as exc:
-                errors[label] = f"{type(exc).__name__}: {str(exc)[:180]}"
+        if calendar is not None:
+            requests = {
+                "Earnings":lambda:calendar.get_earnings_calendar(start=start_date, end=end_date, limit=100, filter_most_active=False),
+                "IPOs":lambda:calendar.get_ipo_info_calendar(start=start_date, end=end_date, limit=100),
+                "Splits":lambda:calendar.get_splits_calendar(start=start_date, end=end_date, limit=100),
+                "Economic events":lambda:calendar.get_economic_events_calendar(start=start_date, end=end_date, limit=100),
+            }
+            for label, fetch in requests.items():
+                if label not in requested:
+                    continue
+                try:
+                    data = fetch()
+                    results[label] = data if isinstance(data, pd.DataFrame) else pd.DataFrame()
+                except Exception as exc:
+                    errors[label] = f"{type(exc).__name__}: {str(exc)[:180]}"
 
     # Keep an earnings view available for the user's own symbols if Yahoo's
     # market-wide calendar query is empty or unavailable.
-    if isinstance(results["Earnings"], pd.DataFrame) and results["Earnings"].empty:
+    if "Earnings" in requested and isinstance(results["Earnings"], pd.DataFrame) and results["Earnings"].empty:
         fallback_frames = []
         for symbol in watchlist_symbols:
             try:
@@ -611,7 +721,7 @@ def run_app() -> None:
         with st.spinner(f"Researching {selected} and the broader market…"):
             payload = load_market_data(selected)
             context = load_market_context()
-        history, info, news = payload["history"], payload["info"], payload["news"]
+        history, info = payload["history"], payload["info"]
         stats = analyze(history, info, payload["options_move"], context.get("SPY"), payload.get("recommendations"))
     except Exception as exc:
         st.error(str(exc))
@@ -739,12 +849,13 @@ def run_app() -> None:
         event_window = st.selectbox("Event window", [30, 60, 90], index=1, format_func=lambda days:f"Next {days} days", key="discovery_event_window")
         event_start = date.today()
         event_end = event_start + timedelta(days=event_window)
-        with st.spinner("Loading upcoming company and market events…"):
-            upcoming_events = load_upcoming_events(event_start, event_end, tuple(symbols))
-        index_tab, earnings_tab, ipo_tab, events_tab = st.tabs(["Industry directory", "Earnings soon", "IPOs soon", "Other events"])
+        index_tab, earnings_tab, ipo_tab, events_tab = st.tabs(
+            ["Industry directory", "Earnings soon", "IPOs soon", "Other events"],
+            key="discovery_index_tabs", on_change="rerun",
+        )
         st.caption(f"Industry and calendar data: Yahoo Finance via yfinance · retrieved {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} · coverage and provider delay are not verified.")
         with index_tab:
-            industry_index = load_industry_index()
+            industry_index = load_tab_data_if_active(index_tab, load_industry_index, pd.DataFrame())
             if industry_index.empty:
                 st.info("Industry directory data is temporarily unavailable. Use ticker search or the watchlist industry filter in the meantime.")
             else:
@@ -840,6 +951,11 @@ def run_app() -> None:
                                             args=(symbol,),
                                         )
         with earnings_tab:
+            upcoming_events = load_tab_data_if_active(
+                earnings_tab,
+                lambda: load_upcoming_events(event_start, event_end, tuple(symbols), ("Earnings",)),
+                {},
+            )
             earnings = upcoming_events.get("Earnings", pd.DataFrame())
             calendar_errors = upcoming_events.get("_errors", {})
             if earnings.empty:
@@ -854,6 +970,10 @@ def run_app() -> None:
                     st.caption("The market-wide calendar was empty, so these dates are from the ticker calendars in your watchlist.")
             st.caption(f"This is an earnings-date calendar for the next {event_window} days. An earnings call may take place after the results release; confirm the call time on the company’s investor relations site.")
         with ipo_tab:
+            upcoming_events = load_tab_data_if_active(
+                ipo_tab, lambda: load_upcoming_events(event_start, event_end, tuple(symbols), ("IPOs",)), {},
+            )
+            calendar_errors = upcoming_events.get("_errors", {})
             ipo_calendar = upcoming_events.get("IPOs", pd.DataFrame())
             if ipo_calendar.empty:
                 if "IPOs" in calendar_errors or "Calendar" in calendar_errors:
@@ -866,6 +986,12 @@ def run_app() -> None:
                 st.dataframe(ipo_calendar.reset_index() if ipo_calendar.index.name else ipo_calendar, use_container_width=True, hide_index=True)
             st.caption("IPO dates, offer prices and share counts can be preliminary and may change. Confirm with the issuer’s filings and exchange notices.")
         with events_tab:
+            upcoming_events = load_tab_data_if_active(
+                events_tab,
+                lambda: load_upcoming_events(event_start, event_end, tuple(symbols), ("Splits", "Economic events")),
+                {},
+            )
+            calendar_errors = upcoming_events.get("_errors", {})
             market_events = upcoming_events.get("Economic events", pd.DataFrame())
             splits = upcoming_events.get("Splits", pd.DataFrame())
             if not market_events.empty:
@@ -956,7 +1082,10 @@ def run_app() -> None:
     with st.container(border=True):
         st.markdown("## Research desk")
         st.markdown('<div class="sub">Price structure, business quality, expectations, catalysts, and primary-source filings in one view.</div>', unsafe_allow_html=True)
-        tab_technical, tab_fundamentals, tab_catalysts = st.tabs(["Technical & relative strength", "Business & valuation", "Estimates, events & filings"])
+        tab_technical, tab_fundamentals, tab_catalysts = st.tabs(
+            ["Technical & relative strength", "Business & valuation", "Estimates, events & filings"],
+            key="research_desk_tabs", on_change="rerun",
+        )
         with tab_technical:
             tech_left, tech_right = st.columns([1, 1])
             with tech_left:
@@ -991,81 +1120,90 @@ def run_app() -> None:
         with tab_fundamentals:
             st.markdown("#### Business profile & valuation")
             st.caption(f"{info.get('sector') or 'Sector unavailable'} · {info.get('industry') or 'Industry unavailable'} · {info.get('fullTimeEmployees') or '—':,} employees" if isinstance(info.get('fullTimeEmployees'), (int,float)) else f"{info.get('sector') or 'Sector unavailable'} · {info.get('industry') or 'Industry unavailable'}")
-            fundamentals = [
-                ("Market cap", info.get("marketCap"), "currency"), ("Trailing P/E", info.get("trailingPE")), ("Forward P/E", info.get("forwardPE")), ("PEG ratio", info.get("pegRatio")),
-                ("Price / sales", info.get("priceToSalesTrailing12Months")), ("EV / EBITDA", info.get("enterpriseToEbitda")),
-                ("Revenue growth", info.get("revenueGrowth"), "percent"), ("Profit margin", info.get("profitMargins"), "percent"),
-                ("Operating margin", info.get("operatingMargins"), "percent"), ("Return on equity", info.get("returnOnEquity"), "percent"),
-                ("Debt / equity", info.get("debtToEquity")), ("Current ratio", info.get("currentRatio")),
-                ("Free cash flow", info.get("freeCashflow"), "currency"), ("Dividend yield", info.get("dividendYield"), "percent"),
-            ]
-            fund_rows = []
-            for entry in fundamentals:
-                label, value = entry[0], entry[1]
-                kind = entry[2] if len(entry) > 2 else "number"
-                if value is None or not np.isfinite(as_float(value)):
-                    display = "—"
-                elif kind == "percent": display = f"{as_float(value)*100:.1f}%"
-                elif kind == "currency": display = f"${as_float(value)/1e12:.2f}T" if abs(as_float(value)) >= 1e12 else f"${as_float(value)/1e9:.2f}B"
-                else: display = f"{as_float(value):,.2f}"
-                fund_rows.append({"Metric":label,"Latest value":display})
+            fund_rows = fundamentals_metric_table(info)
+            if tab_is_active(tab_fundamentals):
+                if payload.get("profile_status") == "error":
+                    st.warning("Company profile fundamentals could not be retrieved.")
+                elif not info or fund_rows["Latest value"].eq("—").all():
+                    st.info("Yahoo Finance did not return company profile fundamentals for this ticker.")
             fund_left, fund_right = st.columns([1, 1])
             with fund_left:
-                st.dataframe(pd.DataFrame(fund_rows[:7]), use_container_width=True, hide_index=True)
+                st.dataframe(fund_rows.iloc[:7], use_container_width=True, hide_index=True)
             with fund_right:
-                st.dataframe(pd.DataFrame(fund_rows[7:]), use_container_width=True, hide_index=True)
-            quarterly = payload.get("quarterly_income")
-            if isinstance(quarterly, pd.DataFrame) and not quarterly.empty:
-                q_rows = {}
-                for label, candidates in (("Revenue ($B)",("Total Revenue",)),("Operating income ($B)",("Operating Income",)),("Net income ($B)",("Net Income",)),("Diluted EPS",("Diluted EPS",))):
-                    match = next((candidate for candidate in candidates if candidate in quarterly.index), None)
-                    if match:
-                        series = quarterly.loc[match].iloc[:4]
-                        q_rows[label] = [as_float(value)/1e9 if label.endswith("($B)") else as_float(value) for value in series]
-                if q_rows:
-                    q_periods = [pd.to_datetime(period).strftime("%b %Y") for period in quarterly.columns[:4]]
-                    q_table = pd.DataFrame(q_rows, index=q_periods)
+                st.dataframe(fund_rows.iloc[7:], use_container_width=True, hide_index=True)
+            statement_result = load_tab_data_if_active(
+                tab_fundamentals, lambda: load_company_fundamentals(selected),
+                {"data":None, "status":"inactive", "message":None},
+            )
+            statement = statement_result.get("data")
+            if statement_result.get("status") in {"error", "malformed"}:
+                st.warning(statement_result.get("message") or "Quarterly statement data is unavailable.")
+            elif statement_result.get("status") == "missing" and tab_is_active(tab_fundamentals):
+                st.info("Yahoo Finance did not return a quarterly income statement for this ticker.")
+            elif isinstance(statement, pd.DataFrame) and not statement.empty:
+                q_table = quarterly_statement_table(statement)
+                if q_table.empty:
+                    st.info("A quarterly statement was returned, but it contained no supported income rows to display.")
+                else:
                     st.markdown("#### Reported quarterly trend")
                     st.dataframe(q_table, use_container_width=True,
                                  column_config={column:st.column_config.NumberColumn(format="$%.2f" if column == "Diluted EPS" else "%.2f") for column in q_table.columns})
             st.caption("Company metrics come from Yahoo Finance snapshots; definitions, reporting periods, and coverage can vary by issuer. Compare valuation within an appropriate peer group.")
         with tab_catalysts:
+            catalyst_data = load_tab_data_if_active(
+                tab_catalysts,
+                lambda: load_company_catalysts(selected),
+                {"_errors":{}, "_missing":[]},
+            )
+            for message in catalyst_data.get("_errors", {}).values():
+                st.warning(message)
             cat_left, cat_right = st.columns([1,1])
             with cat_left:
                 st.markdown("#### Analyst expectations")
-                targets = payload.get("analyst_targets") or {}
-                target_mean = as_float(targets.get("mean")) if isinstance(targets, dict) else np.nan
+                targets = analyst_target_summary(catalyst_data.get("analyst_targets"), stats["last"])
+                target_mean = targets.get("mean") if targets else None
                 target_count = info.get("numberOfAnalystOpinions")
-                if np.isfinite(target_mean) and target_mean > 0:
-                    st.metric("Mean published target", f"${target_mean:,.2f}", f"{(target_mean/stats['last']-1)*100:+.1f}% vs last close")
-                    lo, hi = as_float(targets.get("low")), as_float(targets.get("high"))
-                    if np.isfinite(lo) and np.isfinite(hi): st.caption(f"Published range: ${lo:,.2f} – ${hi:,.2f}. Yahoo-reported analyst count: {target_count or 'unavailable'}.")
+                if target_mean is not None and target_mean > 0:
+                    upside = targets.get("upside_percent")
+                    st.metric("Mean published target", f"${target_mean:,.2f}",
+                              f"{upside:+.1f}% vs last close" if upside is not None else None)
+                    lo, hi = targets.get("low"), targets.get("high")
+                    if lo is not None and hi is not None:
+                        st.caption(f"Published range: ${lo:,.2f} – ${hi:,.2f}. Yahoo-reported analyst count: {target_count or 'unavailable'}.")
                 else:
-                    st.info("Analyst price targets are not available for this symbol.")
+                    if "analyst_targets" not in catalyst_data.get("_errors", {}) and tab_is_active(tab_catalysts):
+                        st.info("Yahoo Finance did not return analyst price targets for this ticker.")
                 rec = payload.get("recommendations")
-                if isinstance(rec, pd.DataFrame) and not rec.empty:
-                    current = rec.iloc[0]
-                    fields = ["strongBuy","buy","hold","sell","strongSell"]
-                    if all(field in rec.columns for field in fields):
-                        st.markdown("**Latest rating distribution**")
-                        st.dataframe(pd.DataFrame({"Rating":["Strong buy","Buy","Hold","Sell","Strong sell"],"Analyst count":[int(as_float(current[f],0)) for f in fields]}), use_container_width=True, hide_index=True)
-                revisions = payload.get("eps_revisions")
+                distribution = recommendation_distribution(rec)
+                if distribution is not None:
+                    st.markdown("**Latest rating distribution**")
+                    st.dataframe(distribution, use_container_width=True, hide_index=True)
+                elif tab_is_active(tab_catalysts):
+                    if payload.get("recommendation_status") in {"error", "malformed"}:
+                        st.warning(payload.get("recommendation_message") or "Analyst recommendation distribution is unavailable.")
+                    else:
+                        st.info("Yahoo Finance did not return an analyst recommendation distribution for this ticker.")
+                revisions = eps_revision_table(catalyst_data.get("eps_revisions"))
                 if isinstance(revisions, pd.DataFrame) and not revisions.empty:
                     st.markdown("**EPS estimate revisions**")
                     st.dataframe(revisions, use_container_width=True)
-                upgrades = payload.get("upgrades")
+                elif "eps_revisions" not in catalyst_data.get("_errors", {}) and tab_is_active(tab_catalysts):
+                    st.info("Yahoo Finance did not return EPS estimate revisions for this ticker.")
+                upgrades = catalyst_data.get("upgrades")
                 if isinstance(upgrades, pd.DataFrame) and not upgrades.empty:
                     st.markdown("**Recent analyst rating changes**")
                     st.dataframe(upgrades.head(8), use_container_width=True)
+                elif "upgrades" not in catalyst_data.get("_errors", {}) and tab_is_active(tab_catalysts):
+                    st.info("Yahoo Finance did not return recent analyst rating changes for this ticker.")
             with cat_right:
                 st.markdown("#### Earnings calendar")
-                dates = payload.get("earnings_dates")
+                dates = catalyst_data.get("earnings_dates")
                 if isinstance(dates, pd.DataFrame) and not dates.empty:
                     st.dataframe(dates.head(6), use_container_width=True)
                 else:
                     st.caption("No earnings dates were returned.")
                 st.markdown("#### Recent SEC filings")
-                filings = payload.get("sec_filings")
+                filings = catalyst_data.get("sec_filings")
                 if filings is None: filings = []
                 if isinstance(filings, pd.DataFrame): filings = filings.to_dict(orient="records")
                 if isinstance(filings, dict):
@@ -1086,6 +1224,9 @@ def run_app() -> None:
     with st.container(border=True):
         st.markdown("## Headlines & sentiment")
         st.markdown('<div class="sub">Headlines are labeled Bullish, Bearish, or Neutral. Neutral means the title has weak, conflicting, broad-market, or unrelated evidence for the selected company.</div>', unsafe_allow_html=True)
+        news, news_warning = load_ticker_news(selected)
+        if news_warning:
+            st.caption(news_warning)
         with st.expander("How the headline classifier works and what the research says"):
             st.markdown("**Bullish** and **Bearish** require a clear directional score plus company-related context. **Neutral** is used when a headline is generic market coverage, does not clearly relate to the selected company, contains only weak wording, or has conflicting positive and negative cues. A single word such as *warning*, *probe*, or *recall* no longer automatically makes a story bearish. Nearby negation is checked for phrases such as **not beating estimates** or **approval denied**. Signal strength is a heuristic, not a probability or a forecast.")
             st.markdown("Financial language depends on context: [Loughran and McDonald’s research](https://onlinelibrary.wiley.com/doi/10.1111/j.1540-6261.2010.01625.x) found general-purpose negative word lists misclassify many terms in financial texts. [FinBERT](https://arxiv.org/abs/1908.10063) uses finance-trained context and three sentiment classes; Market Lens uses a transparent local ruleset, not a trained FinBERT model, so ambiguous headlines are now explicitly left Neutral.")

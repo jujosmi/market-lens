@@ -11,9 +11,13 @@ class CachePolicyTests(unittest.TestCase):
     def test_selected_ticker_refresh_is_scoped_to_symbol(self):
         entries = selected_ticker_cache_entries(" nvda ")
         self.assertIn(("load_market_data", ("NVDA",)), entries)
+        self.assertIn(("load_ticker_news", ("NVDA",)), entries)
+        self.assertIn(("load_company_fundamentals", ("NVDA",)), entries)
+        self.assertIn(("load_company_catalysts", ("NVDA",)), entries)
         self.assertIn(("load_snapshot", ("NVDA",)), entries)
         self.assertIn(("load_profile", ("NVDA",)), entries)
         self.assertIn(("load_analyst_recommendations", ("NVDA",)), entries)
+        self.assertIn(("load_analyst_recommendation_result", ("NVDA",)), entries)
         self.assertIn(("load_chart_history", ("NVDA", "1 day")), entries)
         self.assertEqual(
             {args[1] for name, args in entries if name == "load_chart_history"},
