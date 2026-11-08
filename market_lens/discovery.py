@@ -157,7 +157,10 @@ def fetch_industry_companies(
     errors = []
     key_issue = None
     industry = None
-    key_verified = industry_source == "Yahoo Finance"
+    # A key from the live sector directory is provider-sourced, but still check
+    # its Industry object identity before trusting any company listings. Local
+    # keys also need to exist in yfinance's bundled canonical allowlist.
+    key_verified = False
     if industry_source != "Yahoo Finance" and key not in set(canonical_keys):
         key_issue = f"Built-in key {key!r} is not in yfinance's canonical industry-key list"
         LOGGER.warning("Rejected unlisted local Yahoo Finance industry key %r for %s", key, industry_name)
@@ -167,23 +170,31 @@ def fetch_industry_companies(
         except Exception as exc:
             errors.append(_log_provider_error("industry object", key, exc))
 
-    if industry is not None and industry_source != "Yahoo Finance":
+    if industry is not None:
         try:
-            provider_name = industry.name
-            provider_sector = industry.sector_key if provider_name else None
-            if (industry_identity(provider_name) != industry_identity(industry_name)
-                    or str(provider_sector or "").casefold() != sector_key.casefold()):
-                key_issue = (f"Built-in key {key!r} did not verify against Yahoo's returned industry "
-                             "name and sector")
-                LOGGER.warning("Rejected unverified local Yahoo Finance industry key %r for %s / %s",
-                               key, industry_name, sector_key)
+            provider_name = str(industry.name or "").strip()
+            provider_sector = str(industry.sector_key or "").strip()
+            identity_matches = (
+                industry_identity(provider_name) == industry_identity(industry_name)
+                and provider_sector.casefold() == sector_key.casefold()
+            )
+            if not identity_matches:
+                key_issue = (
+                    f"Yahoo Finance returned industry {provider_name or '<missing>'!r} and sector key "
+                    f"{provider_sector or '<missing>'!r} for {key!r}; expected industry "
+                    f"{industry_name!r} and sector key {sector_key!r}. No unverified industry listings were used."
+                )
+                LOGGER.warning(
+                    "Rejected Yahoo Finance industry identity for key %r: returned name=%r sector=%r; "
+                    "expected name=%r sector=%r",
+                    key, provider_name, provider_sector, industry_name, sector_key,
+                )
                 industry = None
             else:
                 key_verified = True
         except Exception as exc:
-            key_issue = f"Built-in key {key!r} could not be verified ({type(exc).__name__})"
-            LOGGER.warning("Could not verify local Yahoo Finance industry key %r (%s): %s",
-                           key, type(exc).__name__, str(exc)[:240])
+            key_issue = f"Yahoo Finance industry identity for key {key!r} could not be verified ({type(exc).__name__})."
+            errors.append(_log_provider_error("industry identity metadata", key, exc))
             industry = None
 
     frames = []
@@ -222,7 +233,7 @@ def fetch_industry_companies(
     )
     errors.extend(fallback_errors)
     if not fallback.empty:
-        warning = ("Industry listing endpoint was unavailable or its local key did not verify; showing "
+        warning = ("Industry listing was unavailable or did not match its selected identity; showing "
                    "sector companies with Yahoo profile industry/sector confirmation."
                    if errors or key_issue else None)
         return fallback, warning

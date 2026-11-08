@@ -28,7 +28,7 @@ class DiscoveryIndustryTests(unittest.TestCase):
 
     def test_success_combines_provider_company_lists(self):
         industry = SimpleNamespace(
-            name="Software Infrastructure",
+            name="Software Infrastructure", sector_key="technology",
             top_companies=pd.DataFrame({"name":["NVIDIA"]}, index=["NVDA"]),
             top_performing_companies=pd.DataFrame({"ytd return":[0.2]}, index=["NVDA"]),
             top_growth_companies=pd.DataFrame({"growth estimate":[0.3]}, index=["MSFT"]),
@@ -47,11 +47,18 @@ class DiscoveryIndustryTests(unittest.TestCase):
             "Software - Infrastructure", "Technology",
         )
         with patch("app.fetch_industry_companies", return_value=(pd.DataFrame(), None)) as fetch:
-            app.load_industry_companies(
+            first = app.load_industry_companies(
+                "software-infrastructure", "Yahoo Finance", "technology",
+                "Software - Infrastructure", "Technology",
+            )
+            second = app.load_industry_companies(
                 "software-infrastructure", "Yahoo Finance", "technology",
                 "Software - Infrastructure", "Technology",
             )
 
+        pd.testing.assert_frame_equal(first[0], second[0])
+        self.assertEqual(first[1], second[1])
+        fetch.assert_called_once()
         args, kwargs = fetch.call_args
         self.assertEqual(args[:5], (
             "software-infrastructure", "Yahoo Finance", "technology",
@@ -59,9 +66,56 @@ class DiscoveryIndustryTests(unittest.TestCase):
         ))
         self.assertIn("industry_factory", kwargs)
 
+    def test_documented_punctuation_variant_is_accepted_after_identity_normalization(self):
+        # Live yfinance 1.8.0 returned "Software - Infrastructure" for the
+        # software-infrastructure endpoint, while the bundled display label is
+        # "Software—Infrastructure". Punctuation-only normalization preserves
+        # the verified category and the sector key must still match exactly.
+        industry = SimpleNamespace(
+            name="Software - Infrastructure", sector_key="technology",
+            top_companies=pd.DataFrame({"name":["NVIDIA"]}, index=["NVDA"]),
+            top_performing_companies=pd.DataFrame(),
+            top_growth_companies=pd.DataFrame(),
+        )
+        companies, warning = self.call_fetch(
+            industry, industry_name="Software—Infrastructure",
+            key="software-infrastructure",
+        )
+        self.assertEqual(list(companies.index), ["NVDA"])
+        self.assertIsNone(warning)
+
+    def test_incorrect_provider_industry_is_rejected_with_expected_and_returned_identity(self):
+        industry = SimpleNamespace(
+            name="Oil & Gas E&P", sector_key="energy",
+            top_companies=pd.DataFrame({"name":["X"]}, index=["X"]),
+            top_performing_companies=pd.DataFrame(),
+            top_growth_companies=pd.DataFrame(),
+        )
+        companies, warning = self.call_fetch(
+            industry, sector=SimpleNamespace(top_companies=pd.DataFrame()),
+        )
+        self.assertTrue(companies.empty)
+        self.assertIn("returned industry 'Oil & Gas E&P'", warning)
+        self.assertIn("expected industry 'Software Infrastructure'", warning)
+        self.assertIn("No unverified industry listings were used", warning)
+
+    def test_correct_industry_with_wrong_sector_is_rejected(self):
+        industry = SimpleNamespace(
+            name="Software Infrastructure", sector_key="basic-materials",
+            top_companies=pd.DataFrame({"name":["NVDA"]}, index=["NVDA"]),
+            top_performing_companies=pd.DataFrame(),
+            top_growth_companies=pd.DataFrame(),
+        )
+        companies, warning = self.call_fetch(
+            industry, sector=SimpleNamespace(top_companies=pd.DataFrame()),
+        )
+        self.assertTrue(companies.empty)
+        self.assertIn("sector key 'basic-materials'", warning)
+        self.assertIn("expected industry 'Software Infrastructure' and sector key 'technology'", warning)
+
     def test_empty_valid_provider_response_is_not_reported_as_error(self):
         industry = SimpleNamespace(
-            name="Software Infrastructure", top_companies=None,
+            name="Software Infrastructure", sector_key="technology", top_companies=None,
             top_performing_companies=None, top_growth_companies=None,
         )
         sector = SimpleNamespace(top_companies=pd.DataFrame())
@@ -98,7 +152,7 @@ class DiscoveryIndustryTests(unittest.TestCase):
 
     def test_sector_fallback_requires_exact_yahoo_industry_key_match(self):
         industry = SimpleNamespace(
-            name="Software Infrastructure", top_companies=None,
+            name="Software Infrastructure", sector_key="technology", top_companies=None,
             top_performing_companies=None, top_growth_companies=None,
         )
         sector = SimpleNamespace(top_companies=pd.DataFrame(
@@ -141,7 +195,7 @@ class DiscoveryIndustryTests(unittest.TestCase):
         )
 
         self.assertEqual(list(companies.index), ["NVDA"])
-        self.assertIn("did not verify", warning)
+        self.assertIn("did not match its selected identity", warning)
         self.assertIn("Yahoo profile industry/sector confirmation", warning)
         self.assertIn("Yahoo profile industry and sector verified", companies.loc["NVDA", "Company list"])
 
