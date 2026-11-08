@@ -23,7 +23,10 @@ from market_lens.ui.navigation import (
     save_workspace_widget_state,
     workspace_requires_ticker_data,
 )
-from market_lens.ui.theme import DARK_TOKENS, LIGHT_TOKENS, css_variable_declarations, get_theme_tokens
+from market_lens.ui.theme import (
+    DARK_TOKENS, LIGHT_TOKENS, app_background_css, css_variable_declarations,
+    get_theme_tokens, resolve_active_theme,
+)
 
 
 def _luminance(color: str) -> float:
@@ -126,6 +129,24 @@ class NavigationStateTests(unittest.TestCase):
                 for key in keys:
                     self.assertEqual(restored[key], original[key])
                 self.assertFalse(restored[RESTORE_PENDING_KEY])
+
+    def test_theme_resolution_tracks_explicit_and_system_resolved_modes(self):
+        self.assertEqual(resolve_active_theme("light", "dark"), "light")
+        self.assertEqual(resolve_active_theme("dark", "light"), "dark")
+        self.assertEqual(resolve_active_theme("system", "light"), "light")
+        self.assertEqual(resolve_active_theme("auto", "dark"), "dark")
+        self.assertEqual(resolve_active_theme(None, "light"), "light")
+
+    def test_theme_background_uses_shared_tokens_on_all_streamlit_layers(self):
+        declarations = css_variable_declarations(LIGHT_TOKENS)
+        background = app_background_css()
+        self.assertIn("--market-lens-background:#f3f7f5", declarations)
+        self.assertIn("--market-lens-accent:#087f63", declarations)
+        self.assertIn(".stApp, [data-testid=\"stAppViewContainer\"], [data-testid=\"stMain\"]", background)
+        self.assertIn("background-color:var(--market-lens-background) !important", background)
+        self.assertIn("radial-gradient(", background)
+        self.assertIn("var(--market-lens-accent)", background)
+        self.assertNotIn("var(--background-color)", background)
 
     def test_theme_tokens_include_both_modes_and_accessible_semantic_text(self):
         self.assertEqual(get_theme_tokens("light"), LIGHT_TOKENS)
@@ -252,10 +273,11 @@ class NavigationStateTests(unittest.TestCase):
 
             at.session_state["market_lens_ui_theme"] = "light"
             at.run(timeout=120)
-            self.assertTrue(any("--text-color:#17312b" in item.value for item in at.markdown))
+            self.assertTrue(any("--market-lens-text:#17312b" in item.value for item in at.markdown))
+            self.assertTrue(any("background-color:var(--market-lens-background) !important" in item.value for item in at.markdown))
             at.session_state["market_lens_ui_theme"] = "dark"
             at.run(timeout=120)
-            self.assertTrue(any("--text-color:#edf4f2" in item.value for item in at.markdown))
+            self.assertTrue(any("--market-lens-text:#edf4f2" in item.value for item in at.markdown))
 
 
 if __name__ == "__main__":

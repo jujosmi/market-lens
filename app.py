@@ -43,7 +43,7 @@ from market_lens.ui.navigation import (
     restore_workspace_widget_state, save_workspace_widget_state,
     workspace_requires_ticker_data,
 )
-from market_lens.ui.theme import css_variable_declarations, get_theme_tokens
+from market_lens.ui.theme import app_background_css, css_variable_declarations, get_theme_tokens, resolve_active_theme
 
 LOGGER = logging.getLogger("market_lens.app")
 
@@ -53,7 +53,7 @@ def configure_app() -> None:
 
 
     try:
-        ACTIVE_THEME = st.session_state.get("market_lens_ui_theme") or st.context.theme.type
+        ACTIVE_THEME = resolve_active_theme(st.session_state.get("market_lens_ui_theme"), st.context.theme.type)
     except Exception:
         ACTIVE_THEME = "dark"
     LIGHT_THEME = ACTIVE_THEME == "light"
@@ -84,18 +84,17 @@ def configure_app() -> None:
     <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
     :root {
-      --ink:var(--text-color,#edf4f2);
+      --ink:var(--market-lens-text,#edf4f2);
       --muted:var(--market-lens-muted,color-mix(in srgb,var(--ink) 62%,transparent));
-      --panel:var(--secondary-background-color,#111d20);
-      --line:var(--border-color,#26383a);
-      --mint:var(--primary-color,#76e0b2);
-      --app-bg:var(--background-color,#0b1417);
+      --panel:var(--market-lens-surface,#111d20);
+      --line:var(--market-lens-border,#26383a);
+      --mint:var(--market-lens-accent,#76e0b2);
+      --app-bg:var(--market-lens-background,#0b1417);
       --bull:var(--market-lens-bull,color-mix(in srgb,var(--ink) 48%,#00a66c));
       --bear:var(--market-lens-bear,color-mix(in srgb,var(--ink) 48%,#d64555));
       --caution:var(--market-lens-caution,color-mix(in srgb,var(--ink) 48%,#bd7900));
     }
     html, body, [class*="css"] { font-family:var(--market-lens-font-body,'Manrope',system-ui,sans-serif); }
-    .stApp { background:radial-gradient(ellipse at 78% -5%,color-mix(in srgb,var(--mint) 11%,var(--app-bg)) 0%,var(--app-bg) 48%); color:var(--ink); }
     [data-testid="stSidebar"] { background:var(--market-lens-sidebar,var(--secondary-background-color,#0e191c)); border-right:1px solid var(--line); }
     h1,h2,h3 { letter-spacing:-.04em !important; }
     .st-key-market_lens_workspace_nav div[role="radiogroup"] { gap:4px; }
@@ -148,6 +147,7 @@ def configure_app() -> None:
     .st-key-market_lens_ai_helper iframe { width:100% !important; border:0 !important; background:transparent !important; }
     </style>
     """, unsafe_allow_html=True)
+    st.markdown("<style>" + app_background_css() + "</style>", unsafe_allow_html=True)
 
 def as_float(value, default=np.nan):
     try:

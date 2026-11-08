@@ -45,17 +45,28 @@ def get_theme_tokens(theme: object) -> dict[str, str]:
     return dict(LIGHT_TOKENS if str(theme).casefold() == "light" else DARK_TOKENS)
 
 
+def resolve_active_theme(session_theme: object, streamlit_theme: object) -> str:
+    """Use an explicit synchronized mode or Streamlit's resolved light/dark mode."""
+    session_mode = str(session_theme or "").casefold()
+    streamlit_mode = str(streamlit_theme or "").casefold()
+    if session_mode in {"light", "dark"}:
+        return session_mode
+    if streamlit_mode in {"light", "dark"}:
+        return streamlit_mode
+    return "dark"
+
+
 def css_variable_declarations(tokens: dict[str, str]) -> str:
     """Serialize semantic tokens into CSS custom-property declarations."""
     names = {
-        "text": "text-color",
+        "text": "market-lens-text",
         "muted": "market-lens-muted",
-        "surface": "secondary-background-color",
+        "surface": "market-lens-surface",
         "surface_raised": "market-lens-surface-raised",
         "sidebar": "market-lens-sidebar",
-        "border": "border-color",
-        "accent": "primary-color",
-        "background": "background-color",
+        "border": "market-lens-border",
+        "accent": "market-lens-accent",
+        "background": "market-lens-background",
         "bull": "market-lens-bull",
         "bear": "market-lens-bear",
         "caution": "market-lens-caution",
@@ -70,3 +81,19 @@ def css_variable_declarations(tokens: dict[str, str]) -> str:
         f"--ml-space-{index}:{value}px" for index, value in enumerate(SPACING_PX, start=1)
     )
     return ";".join(declarations)
+
+
+
+def app_background_css() -> str:
+    """Theme the app shell and nested view with one token-driven gradient."""
+    return """
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+      background-color:var(--market-lens-background) !important;
+      background-image:radial-gradient(
+        ellipse at 78% -5%,
+        color-mix(in srgb,var(--market-lens-accent) 11%,var(--market-lens-background)) 0%,
+        var(--market-lens-background) 48%
+      ) !important;
+      color:var(--market-lens-text) !important;
+    }
+    """
