@@ -68,6 +68,7 @@ def _market_fixture() -> tuple[dict, dict, DataEnvelope]:
         "trailingPE":30.0,
         "forwardPE":25.0,
         "numberOfAnalystOpinions":61,
+        "fullExchangeName":"Nasdaq Global Select Market",
     }
     payload = {
         "history":history,
@@ -202,6 +203,10 @@ class NavigationStateTests(unittest.TestCase):
             self.assertFalse(at.exception, [item.value for item in at.exception])
             self.assertEqual(at.session_state[WORKSPACE_KEY], "Market Overview")
             self.assertTrue(any("Selected ticker snapshot" in item.value for item in at.markdown))
+            self.assertTrue(any("Selected security" in item.value for item in at.markdown))
+            self.assertTrue(any("Nasdaq Global Select Market" in item.value for item in at.markdown))
+            self.assertTrue(any("MarketLens technical rating" in item.value for item in at.markdown))
+            self.assertTrue(any("Non-directional volatility range" in item.value for item in at.markdown))
             self.assertEqual(core_loader.call_count, 1)
 
             # The overview controls are snapshotted before their hidden widgets are pruned.
@@ -231,17 +236,25 @@ class NavigationStateTests(unittest.TestCase):
             at.run(timeout=120)
             self.assertFalse(at.exception, [item.value for item in at.exception])
             self.assertTrue(any("Company research" in item.value for item in at.markdown))
+            self.assertTrue(any("Trend &amp; price structure" in item.value or "Trend & price structure" in item.value for item in at.markdown))
+            self.assertTrue(any("Momentum &amp; volume" in item.value or "Momentum & volume" in item.value for item in at.markdown))
+            self.assertTrue(any("Risk &amp; volatility" in item.value or "Risk & volatility" in item.value for item in at.markdown))
+            self.assertTrue(any("Ticker return" in str(item.value) for item in at.dataframe))
             self.assertEqual(news_loader.call_count, 0)
             self.assertEqual(core_loader.call_count, core_calls_before_discovery + 1)
 
             at.session_state["research_desk_tabs"] = "Business & valuation"
             at.run(timeout=120)
             self.assertTrue(any("Reported quarterly trend" in item.value for item in at.markdown))
+            self.assertTrue(any("Valuation &amp; size" in item.value or "Valuation & size" in item.value for item in at.markdown))
+            self.assertTrue(any("Growth &amp; profitability" in item.value or "Growth & profitability" in item.value for item in at.markdown))
             self.assertEqual(fundamentals_loader.call_count, 1)
             self.assertEqual(catalysts_loader.call_count, 0)
             at.session_state["research_desk_tabs"] = "Estimates, events & filings"
             at.run(timeout=120)
             self.assertEqual(catalysts_loader.call_count, 1)
+            self.assertTrue(any("Analyst &amp; company events" in item.value or "Analyst & company events" in item.value for item in at.markdown))
+            self.assertTrue(any("Current analyst consensus" in item.label for item in at.metric))
             at.session_state["research_desk_tabs"] = "Headlines & sentiment"
             at.run(timeout=120)
             self.assertEqual(news_loader.call_count, 1)

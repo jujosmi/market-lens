@@ -7,7 +7,6 @@ import re
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
-from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
@@ -38,6 +37,9 @@ from market_lens.research import (
     quarterly_statement_table, recommendation_distribution,
 )
 from market_lens.storage import load_watchlist, save_watchlist
+from market_lens.ui.components import (
+    render_company_header, render_financial_table, render_headline_card, render_metric_card, render_section_heading,
+)
 from market_lens.ui.navigation import (
     WORKSPACES, WORKSPACE_KEY, initialize_workspace_state,
     restore_workspace_widget_state, save_workspace_widget_state,
@@ -119,10 +121,14 @@ def configure_app() -> None:
     .metric-value { font-family:var(--market-lens-font-financial,'DM Mono',monospace); font-size:26px; font-weight:500; margin-top:8px; color:var(--ink); }
     .metric-note { color:var(--muted); font-size:12px; margin-top:5px; }
     .metric-label-row { display:flex; align-items:center; gap:7px; }
-    .help-icon { position:relative; display:inline-flex; align-items:center; justify-content:center; width:17px; height:17px; border:1px solid var(--line); border-radius:50%; color:var(--muted); font:700 11px Manrope,sans-serif; cursor:help; outline:none; }
-    .help-icon:hover, .help-icon:focus { color:var(--app-bg); background:var(--mint); border-color:var(--mint); }
-    .metric-tooltip { visibility:hidden; opacity:0; position:absolute; z-index:1000; right:-8px; bottom:24px; width:280px; padding:11px 13px; border:1px solid var(--line); border-radius:11px; color:var(--ink); background:var(--panel); box-shadow:0 12px 32px rgba(0,0,0,.18); font-size:11px; font-weight:500; line-height:1.5; text-transform:none; letter-spacing:0; transition:opacity .12s ease; }
-    .metric-card:hover .metric-tooltip, .metric-card:focus-within .metric-tooltip, .help-icon:hover .metric-tooltip, .help-icon:focus .metric-tooltip { visibility:visible; opacity:1; }
+    .help-icon { position:relative; display:inline-block; flex:0 0 20px; width:20px; height:20px; }
+    .help-icon > summary { list-style:none; display:flex; align-items:center; justify-content:center; width:20px; height:20px; border:1px solid var(--line); border-radius:50%; color:var(--muted); font:700 11px Manrope,sans-serif; cursor:pointer; }
+    .help-icon > summary::-webkit-details-marker { display:none; }
+    .help-icon > summary::marker { content:""; }
+    .help-icon > summary:hover, .help-icon[open] > summary { color:var(--app-bg); background:var(--mint); border-color:var(--mint); }
+    .help-icon > summary:focus-visible { outline:2px solid var(--mint); outline-offset:3px; }
+    .metric-tooltip { display:none; position:absolute; z-index:1000; right:-8px; bottom:24px; width:min(280px,calc(100vw - 40px)); max-height:min(60vh,320px); overflow:auto; padding:11px 13px; border:1px solid var(--line); border-radius:11px; color:var(--ink); background:var(--panel); box-shadow:0 12px 32px rgba(0,0,0,.18); font-size:11px; font-weight:500; line-height:1.5; text-transform:none; letter-spacing:0; }
+    .help-icon:hover .metric-tooltip, .help-icon[open] .metric-tooltip { display:block; }
     .pill { display:inline-block; padding:5px 10px; border-radius:99px; font-size:11px; font-weight:800; letter-spacing:.04em; }
     .bull { color:var(--bull); background:color-mix(in srgb,#00a66c 12%,transparent); border:1px solid color-mix(in srgb,#00a66c 30%,transparent); }
     .bear { color:var(--bear); background:color-mix(in srgb,#d64555 11%,transparent); border:1px solid color-mix(in srgb,#d64555 29%,transparent); }
@@ -145,6 +151,62 @@ def configure_app() -> None:
     div[data-testid="stVerticalBlockBorderWrapper"] h3 { margin-top:8px; }
     .st-key-market_lens_ai_helper { position:fixed !important; right:20px !important; bottom:20px !important; width:min(390px, calc(100vw - 24px)) !important; z-index:999999 !important; margin:0 !important; }
     .st-key-market_lens_ai_helper iframe { width:100% !important; border:0 !important; background:transparent !important; }
+    .company-header { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px 28px; align-items:center; padding:20px 22px; margin:8px 0 22px; border:1px solid var(--line); border-radius:18px; background:linear-gradient(135deg,color-mix(in srgb,var(--panel) 93%,var(--mint) 7%),var(--panel)); }
+    .company-identity h2 { margin:3px 0 6px; font-size:clamp(22px,2.2vw,30px); letter-spacing:-.035em; }
+    .company-ticker { display:inline-block; margin-left:8px; padding:3px 8px; border:1px solid var(--line); border-radius:8px; color:var(--mint); font:600 .56em var(--market-lens-font-financial,monospace); vertical-align:middle; letter-spacing:0; }
+    .company-meta { color:var(--muted); font-size:13px; line-height:1.55; }
+    .company-price-block { min-width:175px; text-align:right; }
+    .company-price { color:var(--ink); font:600 clamp(24px,2.4vw,32px) var(--market-lens-font-financial,monospace); font-variant-numeric:tabular-nums; margin:2px 0; }
+    .company-change { font-weight:750; font-variant-numeric:tabular-nums; }
+    .company-change.positive { color:var(--bull); }
+    .company-change.negative { color:var(--bear); }
+    .company-change.neutral { color:var(--muted); }
+    .company-freshness { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:5px 12px; padding-top:11px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; line-height:1.5; }
+    .freshness-label { color:var(--ink); font-weight:700; }
+    .section-heading { margin:4px 0 14px; }
+    .section-heading h2 { margin:2px 0 4px; font-size:22px; letter-spacing:-.03em; }
+    .section-eyebrow { color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    .section-description { color:var(--muted); font-size:13px; line-height:1.5; }
+    .metric-card { min-height:136px; display:flex; flex-direction:column; }
+    .metric-card.positive { border-top:2px solid var(--bull); }
+    .metric-card.negative { border-top:2px solid var(--bear); }
+    .metric-card.accent { border-top:2px solid var(--mint); }
+    .metric-value { font-variant-numeric:tabular-nums; }
+    .metric-note { line-height:1.45; }
+    .chart-control-caption { margin:10px 0 3px; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    .st-key-market_chart_controls { padding:12px 14px 8px; margin:8px 0 12px; border:1px solid var(--line); border-radius:12px; background:color-mix(in srgb,var(--panel) 88%,transparent); }
+    .st-key-market_chart_controls [data-testid="stRadio"] div[role="radiogroup"] { display:flex; flex-wrap:wrap; gap:5px 9px; }
+    .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"], .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] { align-items:stretch; }
+    .st-key-research_indicator_groups [data-testid="stHorizontalBlock"] { align-items:flex-start; }
+    div[data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+    .news-row { position:relative; padding:15px 16px; margin:10px 0; border:1px solid var(--line); border-radius:13px; background:color-mix(in srgb,var(--panel) 92%,transparent); }
+    .news-title { display:block; padding-right:4px; font-size:15px; line-height:1.5; }
+    .news-meta { line-height:1.8; }
+    .news-source-link { display:inline-flex; margin-top:5px; color:var(--mint); font-weight:700; text-decoration:none; }
+    .news-source-link:hover,.news-source-link:focus-visible { text-decoration:underline; outline:2px solid var(--mint); outline-offset:2px; }
+    .news-source-link.unavailable { color:var(--muted); font-weight:500; }
+    .market-data-note { padding:9px 12px; border-left:3px solid var(--mint); border-radius:0 9px 9px 0; background:color-mix(in srgb,var(--panel) 90%,transparent); color:var(--muted); font-size:12px; line-height:1.5; }
+    @media (max-width: 900px) {
+      .st-key-market_chart_controls [data-testid="stHorizontalBlock"] { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 12px; }
+      .st-key-market_chart_controls [data-testid="stHorizontalBlock"] > div { width:100% !important; min-width:0 !important; }
+      .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"], .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"], .st-key-research_indicator_groups [data-testid="stHorizontalBlock"], .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+      .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"] > div, .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] > div, .st-key-research_indicator_groups [data-testid="stHorizontalBlock"] > div, .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] > div { width:100% !important; min-width:0 !important; }
+    }
+    @media (max-width: 640px) {
+      .company-header { grid-template-columns:minmax(0,1fr); gap:12px; padding:16px; }
+      .company-price-block { text-align:left; }
+      .company-freshness { grid-column:auto; flex-direction:column; gap:2px; }
+      .hero h1 { font-size:32px; }
+      .section-heading h2 { font-size:20px; }
+      .st-key-market_chart_controls [data-testid="stHorizontalBlock"] { grid-template-columns:minmax(0,1fr); }
+      .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"], .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+      .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"] > div, .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] > div { width:100% !important; min-width:0 !important; }
+      .st-key-research_indicator_groups [data-testid="stHorizontalBlock"], .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] { display:grid !important; grid-template-columns:minmax(0,1fr); gap:12px; }
+      .st-key-research_indicator_groups [data-testid="stHorizontalBlock"] > div, .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] > div { width:100% !important; min-width:0 !important; }
+      .stTabs [data-baseweb="tab-list"] { gap:4px; overflow-x:auto; }
+      .stTabs [data-baseweb="tab"] { min-height:42px; font-size:12px; }
+      .company-freshness,.news-meta { overflow-wrap:anywhere; }
+    }
     </style>
     """, unsafe_allow_html=True)
     st.markdown("<style>" + app_background_css() + "</style>", unsafe_allow_html=True)
@@ -750,77 +812,88 @@ def run_app() -> None:
             st.stop()
 
     if workspace_requires_ticker_data(workspace):
-        up = np.isfinite(stats["change"]) and stats["change"] >= 0
-        change_color = ("#087f63" if LIGHT_THEME else "#76e0b2") if up else ("#b42335" if LIGHT_THEME else "#ff8585")
-        company_industry = html.escape(info.get("industry") or info.get("sector") or "Industry unavailable")
         history_meta = payload["history_result"]
-        with st.container(border=True):
-            st.markdown(f'<div class="eyebrow">{html.escape(stats["name"] or selected)} &nbsp;·&nbsp; {selected} &nbsp;·&nbsp; {company_industry} &nbsp;·&nbsp; {datetime.now().strftime("%A, %B %d")}</div>', unsafe_allow_html=True)
-            st.caption(f"Price source: {history_meta.source} · retrieved: {history_meta.retrieved_at.astimezone().strftime('%Y-%m-%d %H:%M %Z')} · interval: {history_meta.interval} · status: {history_meta.status} · latest bar: {history_meta.last_observation or 'unavailable'} · quote delay: {history_meta.provider_delay}")
-            if history_meta.warning:
-                if history_meta.status == "partial":
-                    st.caption(f"Data note · {history_meta.warning}")
-                else:
-                    st.warning(history_meta.warning)
-            for warning in payload.get("optional_warnings", []):
-                st.warning(warning)
+        daily_move = stats.get("change")
+        change_direction = True if np.isfinite(daily_move) and daily_move > 0 else False if np.isfinite(daily_move) and daily_move < 0 else None
+        render_company_header(
+            name=stats.get("name") or selected, symbol=selected,
+            exchange=info.get("fullExchangeName") or info.get("exchange") or "Exchange unavailable",
+            sector=info.get("sector") or "Sector unavailable",
+            industry=info.get("industry") or "Industry unavailable",
+            price=f"${stats['last']:,.2f}" if np.isfinite(stats.get("last", np.nan)) else "Unavailable",
+            daily_change=f"{daily_move:+.2f}% today" if np.isfinite(daily_move) else "Daily change unavailable",
+            change_positive=change_direction, source=history_meta.source,
+            retrieved=history_meta.retrieved_at.astimezone().strftime("%Y-%m-%d %H:%M %Z"),
+            interval=history_meta.interval, status=history_meta.status,
+            latest_bar=history_meta.last_observation or "unavailable",
+            quote_delay=history_meta.provider_delay,
+        )
+        if history_meta.warning:
+            if history_meta.status == "partial":
+                st.caption(f"Data note · {history_meta.warning}")
+            else:
+                st.warning(history_meta.warning)
+        for warning in payload.get("optional_warnings", []):
+            st.warning(warning)
 
     if workspace == "Market Overview":
         st.markdown('<div id="selected-ticker" class="section-anchor"></div>', unsafe_allow_html=True)
         with st.container(border=True):
-            snapshot_symbol = html.escape(selected)
-            snapshot_company = html.escape(stats.get("name") or selected)
-            st.markdown(f'## Selected ticker snapshot <span class="snapshot-security">({snapshot_symbol} · {snapshot_company})</span>', unsafe_allow_html=True)
-            cols = st.columns(4)
-            move_explanation = ("A one-standard-deviation 30-day range from " + stats["move_source"] + ". This describes possible variability, not whether price is expected to rise or fall.")
-            trend_note = f"RSI {stats['rsi']:.0f} · 20d / 50d / 200d trend" if np.isfinite(stats['rsi']) else "RSI unavailable · trend windows require full history"
-            metrics = [
-                ("Last close", f"${stats['last']:,.2f}", f"<span style='color:{change_color}'>{stats['change']:+.2f}% today</span>" if np.isfinite(stats['change']) else "Daily change unavailable",
-                 "Latest adjusted daily closing price returned by the provider. Today's change compares it with the prior available daily close."),
-                ("30 day expected move", f"±{stats['move']*100:.1f}%" if np.isfinite(stats['move']) else "Unavailable", stats["move_source"], move_explanation),
-                ("Trend read", stats["state"], trend_note, trend_explanation(stats)),
-                ("Signal rating", stats["rating"],
-                 f"{stats['analyst_count']} analyst ratings" if stats.get("analyst_rating") else f"Technical fallback · {stats['constructive_checks']} constructive · {stats['caution_checks']} caution",
-                 rating_explanation(stats)),
-            ]
-            for col, (label, value, note, explanation) in zip(cols, metrics):
-                safe_label = html.escape(label)
-                safe_explanation = html.escape(explanation)
-                col.markdown(f'<div class="panel metric-card"><div class="metric-label-row"><div class="metric-label">{safe_label}</div><span class="help-icon" tabindex="0" role="button" aria-label="Explanation for {safe_label}">i<span class="metric-tooltip" role="tooltip">{safe_explanation}</span></span></div><div class="metric-value">{value}</div><div class="metric-note">{note}</div></div>', unsafe_allow_html=True)
+            render_section_heading("Selected ticker snapshot", f"{stats.get('name') or selected} ({selected})")
+            with st.container(key="market_snapshot_metrics"):
+                cols = st.columns(4)
+                move_explanation = ("A one-standard-deviation 30-day range from " + stats["move_source"] + ". This describes possible variability, not whether price is expected to rise or fall.")
+                trend_note = f"RSI {stats['rsi']:.0f} · 20d / 50d / 200d trend" if np.isfinite(stats['rsi']) else "RSI unavailable · trend windows require full history"
+                technical_stats = {**stats, "rating":stats.get("technical_rating"), "analyst_rating":None}
+                analyst_note = (f"Wall Street consensus: {stats['analyst_rating']} ({stats['analyst_count']} ratings)" if stats.get("analyst_rating")
+                                else "Analyst consensus unavailable · technical screen shown")
+                metrics = [
+                    ("Last close", f"${stats['last']:,.2f}" if np.isfinite(stats['last']) else "Unavailable",
+                     f"{stats['change']:+.2f}% today" if np.isfinite(stats['change']) else "Daily change unavailable",
+                     "Latest adjusted daily closing price returned by the provider. Today's change compares it with the prior available daily close.",
+                     "positive" if np.isfinite(stats["change"]) and stats["change"] > 0 else "negative" if np.isfinite(stats["change"]) and stats["change"] < 0 else "neutral"),
+                    ("30-day expected range", f"±{stats['move']*100:.1f}%" if np.isfinite(stats['move']) else "Unavailable",
+                     f"Non-directional volatility range · {stats['move_source']}", move_explanation, "accent"),
+                    ("Trend read", stats["state"], trend_note, trend_explanation(stats), ""),
+                    ("MarketLens technical rating", stats["technical_rating"],
+                     f"{stats['constructive_checks']} constructive · {stats['caution_checks']} caution · {analyst_note}",
+                     rating_explanation(technical_stats), "accent"),
+                ]
+                for col, (label, value, note, explanation, tone) in zip(cols, metrics):
+                    with col:
+                        render_metric_card(label, value, note, explanation, tone)
 
             st.write("")
             left, right = st.columns([1.55, 1])
             with left:
                 st.markdown('<div class="panel">', unsafe_allow_html=True)
                 interval_options = ["15 minute", "30 minute", "1 hour", "2 hours", "12 hours", "1 day"]
-                chart_controls = st.columns([2.8, 1.05, 1.25, 1.45, 1.15])
-                with chart_controls[2]:
-                    chart_interval = st.selectbox("Interval", interval_options, index=5, key="market_chart_interval")
-                chart_window_options = (["1D", "5D", "1M", "2M", "Max"] if chart_interval != "1 day"
-                                        else ["1M", "3M", "6M", "1Y", "2Y", "5Y", "Max"])
-                default_window = "6M" if chart_interval == "1 day" else "5D"
-                if st.session_state.get("market_chart_range") not in chart_window_options:
-                    st.session_state["market_chart_range"] = default_window
-                average_unit = "day" if chart_interval == "1 day" else "bar"
-                average_options = [f"20 {average_unit}", f"50 {average_unit}", f"200 {average_unit}"]
-                default_averages = average_options[:2]
-                selected_averages = st.session_state.get("market_chart_averages")
-                if selected_averages is None or not set(selected_averages).issubset(average_options):
-                    st.session_state["market_chart_averages"] = default_averages
-
-                with chart_controls[0]:
+                with st.container(key="market_chart_controls"):
+                    chart_controls = st.columns([1.2, 1.15, 1.55, 1.05])
+                    with chart_controls[0]:
+                        chart_interval = st.selectbox("Bar interval", interval_options, index=5, key="market_chart_interval")
+                    chart_window_options = (["1D", "5D", "1M", "2M", "Max"] if chart_interval != "1 day"
+                                            else ["1M", "3M", "6M", "1Y", "2Y", "5Y", "Max"])
+                    default_window = "6M" if chart_interval == "1 day" else "5D"
+                    if st.session_state.get("market_chart_range") not in chart_window_options:
+                        st.session_state["market_chart_range"] = default_window
+                    average_unit = "day" if chart_interval == "1 day" else "bar"
+                    average_options = [f"20 {average_unit}", f"50 {average_unit}", f"200 {average_unit}"]
+                    default_averages = average_options[:2]
+                    selected_averages = st.session_state.get("market_chart_averages")
+                    if selected_averages is None or not set(selected_averages).issubset(average_options):
+                        st.session_state["market_chart_averages"] = default_averages
+                    with chart_controls[1]:
+                        chart_type = st.selectbox("Chart style", ["Candles", "Line"], key="market_chart_style")
+                    with chart_controls[2]:
+                        chart_averages = st.multiselect("Moving averages", average_options, key="market_chart_averages")
+                    with chart_controls[3]:
+                        open_fullscreen = st.button("⛶ Fullscreen", key="market_chart_open_fullscreen", use_container_width=True)
+                    st.markdown('<div class="chart-control-caption">Visible period</div>', unsafe_allow_html=True)
                     chart_window = st.radio(
-                        "Range", chart_window_options, horizontal=True,
+                        "Chart period", chart_window_options, horizontal=True,
                         label_visibility="collapsed", key="market_chart_range",
                     )
-                with chart_controls[1]:
-                    chart_type = st.selectbox("Chart style", ["Candles", "Line"], key="market_chart_style")
-                with chart_controls[3]:
-                    chart_averages = st.multiselect(
-                        "Averages", average_options, key="market_chart_averages",
-                    )
-                with chart_controls[4]:
-                    open_fullscreen = st.button("⛶ Fullscreen", key="market_chart_open_fullscreen", use_container_width=True)
                 st.markdown(f'<div class="smallcaps">Price action · {chart_window} · {chart_interval} · {chart_type.lower()}</div>', unsafe_allow_html=True)
                 with st.spinner(f"Loading {chart_interval} chart data for {selected}…"):
                     if chart_interval == "1 day" and chart_window not in {"5Y", "Max"}:
@@ -1037,12 +1110,12 @@ def run_app() -> None:
         st.markdown('<div id="market-pulse" class="section-anchor"></div>', unsafe_allow_html=True)
         with st.container(border=True):
             pulse_title, pulse_refresh = st.columns([5, 1])
-            pulse_title.markdown("## Market pulse")
+            with pulse_title:
+                render_section_heading("Market pulse", "Broad-market direction, volatility regime, and sector participation.")
             if pulse_refresh.button("↻ Refresh pulse", key="refresh_market_context", use_container_width=True):
                 load_market_context.clear()
                 load_benchmark.clear()
                 st.rerun()
-            st.markdown("### Index performance")
             context_meta = context.get("_metadata", {})
             status_counts = pd.Series([meta.status for meta in context_meta.values()]).value_counts().to_dict() if context_meta else {}
             st.caption(f"Broad-market source: Yahoo Finance via yfinance · retrieved {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} · daily interval · quality statuses: {status_counts or 'unavailable'} · quote delay is not verified by this provider")
@@ -1084,26 +1157,48 @@ def run_app() -> None:
                     sector_rows.append({"Sector":sector,"ETF":symbol,"1 month":perf1m,"vs S&P 1m":perf1m-spy1m if np.isfinite(spy1m) else np.nan,"3 months":perf3m,"vs S&P 3m":perf3m-spy3m if np.isfinite(spy3m) else np.nan,"Above 50d":float(close.iloc[-1]) > float(close.tail(50).mean()),"As of":pd.Timestamp(close.index[-1]).strftime("%Y-%m-%d"),"Data status":metadata.status if metadata else "unknown"})
             sector_rows.sort(key=lambda x:x["vs S&P 1m"] if np.isfinite(x["vs S&P 1m"]) else -999, reverse=True)
             pos_breadth = sum(1 for row in sector_rows if row["1 month"] > 0)
-            mc1, mc2 = st.columns([1, 2])
-            with mc1:
-                vix_text = f"{vix_level:.1f}" if np.isfinite(vix_level) else "Unavailable"
-                vix_label = "elevated" if np.isfinite(vix_level) and vix_level >= 25 else "moderate" if np.isfinite(vix_level) and vix_level >= 18 else "calm" if np.isfinite(vix_level) else "—"
-                tnx_frame = context.get("^TNX")
-                yield10 = float(tnx_frame["Close"].dropna().iloc[-1]) if tnx_frame is not None and not tnx_frame.empty else np.nan
-                yield_text = f"{yield10:.2f}%" if np.isfinite(yield10) else "—"
-                vix_meta, tnx_meta = context_meta.get("^VIX"), context_meta.get("^TNX")
-                vix_asof = pd.Timestamp(vix_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if vix_frame is not None and not vix_frame.empty else "unavailable"
-                tnx_asof = pd.Timestamp(tnx_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if tnx_frame is not None and not tnx_frame.empty else "unavailable"
-                vix_status = vix_meta.status if vix_meta else "unknown"
-                tnx_status = tnx_meta.status if tnx_meta else "unknown"
-                st.markdown(f'<div class="panel"><div class="smallcaps">Regime & volatility</div><div class="metric-value">{vix_text} <span style="font:500 14px Manrope;color:var(--muted)">VIX · {vix_label}</span></div><div class="metric-note">VIX as of {vix_asof} · {vix_status}</div><div class="metric-note">S&P 500 trend: {spy_trend}</div><div class="metric-note">10Y Treasury proxy: {yield_text} · as of {tnx_asof} · {tnx_status}</div><div class="metric-note">{pos_breadth} of {len(sector_rows)} sectors positive over the past month</div></div>', unsafe_allow_html=True)
-            with mc2:
-                st.dataframe(pd.DataFrame(benchmarks), use_container_width=True, hide_index=True,
-                             column_config={"Last":st.column_config.NumberColumn(format="$%.2f"),"Day":st.column_config.NumberColumn(format="%+.2f%%"),"1 month":st.column_config.NumberColumn(format="%+.1f%%")})
+            vix_text = f"{vix_level:.1f}" if np.isfinite(vix_level) else "Unavailable"
+            vix_label = "elevated" if np.isfinite(vix_level) and vix_level >= 25 else "moderate" if np.isfinite(vix_level) and vix_level >= 18 else "calm" if np.isfinite(vix_level) else "unavailable"
+            tnx_frame = context.get("^TNX")
+            yield10 = float(tnx_frame["Close"].dropna().iloc[-1]) if tnx_frame is not None and not tnx_frame.empty else np.nan
+            yield_text = f"{yield10:.2f}%" if np.isfinite(yield10) else "Unavailable"
+            vix_meta, tnx_meta = context_meta.get("^VIX"), context_meta.get("^TNX")
+            vix_asof = pd.Timestamp(vix_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if vix_frame is not None and not vix_frame.empty else "unavailable"
+            tnx_asof = pd.Timestamp(tnx_frame["Close"].dropna().index[-1]).strftime("%Y-%m-%d") if tnx_frame is not None and not tnx_frame.empty else "unavailable"
+            vix_status = vix_meta.status if vix_meta else "unknown"
+            tnx_status = tnx_meta.status if tnx_meta else "unknown"
+            with st.container(key="market_pulse_metrics"):
+                pulse_metrics = st.columns(4)
+                cards = (
+                    ("VIX · implied volatility", vix_text, f"{vix_label.title()} · {vix_asof} · {vix_status}",
+                     "The VIX reflects options-implied, non-directional expected S&P 500 volatility over roughly 30 days. Its level does not indicate whether prices are expected to rise or fall."),
+                    ("10-year Treasury proxy", yield_text, f"{tnx_asof} · {tnx_status}",
+                     "Yahoo Finance's ^TNX quote is shown as a market proxy. It is not a direct Treasury yield quote."),
+                    ("S&P 500 trend", spy_trend, "Daily ETF proxy · trend context", 
+                     "The trend description compares SPY's last available close with its 50-session and 200-session averages; it is descriptive, not a forecast."),
+                    ("Sector breadth", f"{pos_breadth} of {len(sector_rows)}", "Sectors with positive 1-month ETF return",
+                     "Breadth counts available sector ETF rows with positive one-month returns. Sector ETFs are proxies and do not represent every constituent."),
+                )
+                for col, (label, value, note, explanation) in zip(pulse_metrics, cards):
+                    with col:
+                        render_metric_card(label, value, note, explanation, "accent")
+            render_section_heading("Index performance", "Latest close, daily move, and one-month context for broad-market ETFs.")
+            render_financial_table(
+                pd.DataFrame(benchmarks),
+                column_config={
+                    "Last":st.column_config.NumberColumn(format="$%.2f"),
+                    "Day":st.column_config.NumberColumn(format="%+.2f%%"),
+                    "1 month":st.column_config.NumberColumn(format="%+.1f%%"),
+                },
+                key="market_pulse_index_table",
+            )
             with st.expander("Sector rotation · 11 sector ETFs"):
                 if sector_rows:
-                    st.dataframe(pd.DataFrame(sector_rows), use_container_width=True, hide_index=True,
-                                 column_config={column:st.column_config.NumberColumn(format="%+.1f%%") for column in ("1 month","vs S&P 1m","3 months","vs S&P 3m")})
+                    render_financial_table(
+                        pd.DataFrame(sector_rows),
+                        column_config={column:st.column_config.NumberColumn(format="%+.1f%%") for column in ("1 month","vs S&P 1m","3 months","vs S&P 3m")},
+                        key="market_pulse_sector_table",
+                    )
                     st.caption("Sector ETFs are proxies. Relative returns compare each sector ETF with SPY; this is not a complete measure of individual-stock market breadth.")
             st.caption("VIX reflects options-implied, non-directional 30-day S&P 500 volatility, not a forecast of whether the market will rise or fall. Its calm / moderate / elevated labels are rough display bands. [Cboe methodology](https://www.cboe.com/tradable_products/vix/faqs)")
 
@@ -1118,50 +1213,75 @@ def run_app() -> None:
                 key="research_desk_tabs", on_change="rerun",
             )
             with tab_technical:
-                tech_left, tech_right = st.columns([1, 1])
-                with tech_left:
-                    st.markdown("#### Trend and risk signals")
-                    tech_rows = [
-                        ("Trend stack", stats["state"]), ("20 day average", f"${stats['sma20']:,.2f} · {'price above' if stats['last'] > stats['sma20'] else 'price below'}" if np.isfinite(stats['sma20']) else "Unavailable · requires 20 closes"),
-                        ("50 day average", f"${stats['sma50']:,.2f} · {'price above' if stats['last'] > stats['sma50'] else 'price below'}" if np.isfinite(stats['sma50']) else "Unavailable · requires 50 closes"),
-                        ("200 day average", f"${stats['sma200']:,.2f} · {'price above' if stats['last'] > stats['sma200'] else 'price below'}" if np.isfinite(stats['sma200']) else "Unavailable · requires 200 closes"),
-                        ("RSI (14)", f"{stats['rsi']:.1f} · {'overbought zone' if stats['rsi'] >= 70 else 'oversold zone' if stats['rsi'] <= 30 else 'middle range'}" if np.isfinite(stats['rsi']) else "Unavailable · requires 15 closes"),
-                        ("MACD (12, 26, 9)", f"{'above' if stats['macd'] > stats['macd_signal'] else 'below'} signal · {stats['macd']:.2f}" if np.isfinite(stats['macd']) and np.isfinite(stats['macd_signal']) else "Unavailable · requires more history"),
-                        ("Realized volatility", f"{stats['hist_vol']*100:.1f}% annualized · trailing 30 sessions" if np.isfinite(stats['hist_vol']) else f"Unavailable · {stats['hist_vol_observations']} of 30 sessions"),
-                        ("Beta vs S&P 500", f"{stats['beta']:.2f}" if np.isfinite(stats["beta"]) else "Unavailable"),
-                        ("52 week range", f"${stats['low52']:,.2f} – ${stats['high52']:,.2f}" if np.isfinite(stats['low52']) and np.isfinite(stats['high52']) else "Unavailable · requires 252 closes"),
-                        ("Current drawdown from high", f"{stats['current_drawdown']:.1f}%" if np.isfinite(stats['current_drawdown']) else "Unavailable · requires 252 closes"),
-                        ("Largest 1 year drawdown", f"{stats['drawdown']:.1f}%" if np.isfinite(stats['drawdown']) else f"Unavailable · {stats['drawdown_observations']} of 252 closes"),
-                        ("Relative volume", f"{stats['relative_volume']:.2f}× 20 day median" if np.isfinite(stats["relative_volume"]) else "Unavailable"),
+                render_section_heading("Technical & relative strength", "Price structure, momentum, risk, and benchmark-relative performance.")
+                tech_rows = [
+                    ("Trend stack", stats["state"]),
+                    ("20 day average", f"${stats['sma20']:,.2f} · {'price above' if stats['last'] > stats['sma20'] else 'price below'}" if np.isfinite(stats['sma20']) else "Unavailable · requires 20 closes"),
+                    ("50 day average", f"${stats['sma50']:,.2f} · {'price above' if stats['last'] > stats['sma50'] else 'price below'}" if np.isfinite(stats['sma50']) else "Unavailable · requires 50 closes"),
+                    ("200 day average", f"${stats['sma200']:,.2f} · {'price above' if stats['last'] > stats['sma200'] else 'price below'}" if np.isfinite(stats['sma200']) else "Unavailable · requires 200 closes"),
+                    ("RSI (14)", f"{stats['rsi']:.1f} · {'overbought zone' if stats['rsi'] >= 70 else 'oversold zone' if stats['rsi'] <= 30 else 'middle range'}" if np.isfinite(stats['rsi']) else "Unavailable · requires 15 closes"),
+                    ("MACD (12, 26, 9)", f"{'above' if stats['macd'] > stats['macd_signal'] else 'below'} signal · {stats['macd']:.2f}" if np.isfinite(stats['macd']) and np.isfinite(stats['macd_signal']) else "Unavailable · requires more history"),
+                    ("Realized volatility", f"{stats['hist_vol']*100:.1f}% annualized · trailing 30 sessions" if np.isfinite(stats['hist_vol']) else f"Unavailable · {stats['hist_vol_observations']} of 30 sessions"),
+                    ("Beta vs S&P 500", f"{stats['beta']:.2f}" if np.isfinite(stats["beta"]) else "Unavailable"),
+                    ("52 week range", f"${stats['low52']:,.2f} – ${stats['high52']:,.2f}" if np.isfinite(stats['low52']) and np.isfinite(stats['high52']) else "Unavailable · requires 252 closes"),
+                    ("Current drawdown from high", f"{stats['current_drawdown']:.1f}%" if np.isfinite(stats['current_drawdown']) else "Unavailable · requires 252 closes"),
+                    ("Largest 1 year drawdown", f"{stats['drawdown']:.1f}%" if np.isfinite(stats['drawdown']) else f"Unavailable · {stats['drawdown_observations']} of 252 closes"),
+                    ("Relative volume", f"{stats['relative_volume']:.2f}× 20 day median" if np.isfinite(stats["relative_volume"]) else "Unavailable"),
+                ]
+                readings = dict(tech_rows)
+                groups = (
+                    ("Trend & price structure", ("Trend stack", "20 day average", "50 day average", "200 day average", "52 week range", "Current drawdown from high")),
+                    ("Momentum & volume", ("RSI (14)", "MACD (12, 26, 9)", "Relative volume")),
+                    ("Risk & volatility", ("Realized volatility", "Beta vs S&P 500", "Largest 1 year drawdown")),
+                )
+                with st.container(key="research_indicator_groups"):
+                    group_columns = st.columns(3)
+                    for col, (title, labels) in zip(group_columns, groups):
+                        with col:
+                            st.markdown(f"#### {title}")
+                            rows = [(label, readings[label]) for label in labels]
+                            render_financial_table(pd.DataFrame(rows, columns=["Measure", "Reading"]), key=f"research_{title.casefold().replace(' ', '_').replace('&', 'and')}")
+                render_section_heading("Performance vs S&P 500", "Provider-derived returns and excess return for the selected horizons.")
+                rel_rows = [
+                    {"Horizon":h.upper(), "Ticker return":r["asset"], "S&P 500":r["benchmark"], "Excess return":r["excess"]}
+                    for h, r in stats["returns"].items()
+                ]
+                return_config = {column:st.column_config.NumberColumn(format="%+.1f%%") for column in ("Ticker return", "S&P 500", "Excess return")}
+                render_financial_table(pd.DataFrame(rel_rows), column_config=return_config, key="research_relative_returns")
+                positives = stats["constructive_checks"]
+                risks = stats["caution_checks"]
+                rating_coverage = "all required checks available" if stats["rating_checks_complete"] else "missing inputs prevent a rating"
+                st.markdown(f"**MarketLens technical screen: {stats['technical_rating']}** · {positives} constructive checks vs {risks} caution checks · {rating_coverage}.")
+                st.caption("This rule-based technical label is separate from Wall Street analyst consensus. Buy means at least 2 more constructive than caution checks; Sell means at least 2 more caution than constructive; Hold means the counts are within 1. All 10 checks must be available. It is not a forecast or a personal instruction to trade.")
+                with st.expander("See the technical rating checks"):
+                    check_rows = [
+                        {"Side":check["side"], "Check":check["label"],
+                         "Result":"Passed" if check["passed"] is True else "Not passed" if check["passed"] is False else "Unavailable"}
+                        for check in stats.get("rating_check_details", [])
                     ]
-                    st.dataframe(pd.DataFrame(tech_rows, columns=["Measure", "Reading"]), use_container_width=True, hide_index=True)
-                with tech_right:
-                    st.markdown("#### Performance vs S&P 500")
-                    rel_rows = [{"Horizon":h,"Ticker":r["asset"],"S&P 500":r["benchmark"],"Excess return":r["excess"]} for h,r in stats["returns"].items()]
-                    st.dataframe(pd.DataFrame(rel_rows), use_container_width=True, hide_index=True,
-                                 column_config={"Ticker":st.column_config.NumberColumn(format="%+.1f%%"),"S&P 500":st.column_config.NumberColumn(format="%+.1f%%"),"Excess return":st.column_config.NumberColumn(format="%+.1f%%")})
-                    st.markdown("#### Read-through")
-                    positives = stats["constructive_checks"]
-                    risks = stats["caution_checks"]
-                    rating_coverage = "all required checks available" if stats["rating_checks_complete"] else "missing inputs prevent a rating"
-                    st.markdown(f"**Screening label: {stats['rating']}** · {positives} constructive checks vs {risks} caution checks · {rating_coverage}.")
-                    st.caption("Market Lens Buy / Hold / Sell is a technical screen, separate from analyst consensus. Buy means at least 2 more constructive than caution checks; Sell means at least 2 more caution than constructive; Hold means the counts are within 1. All 10 checks must be available. It is not a forecast or a personal instruction to trade.")
-                    with st.expander("See the rating checks"):
-                        st.markdown("**Buy:** net score +2 or higher (constructive checks minus caution checks). **Hold:** net score −1, 0, or +1. **Sell:** net score −2 or lower. Each check has equal weight; a missing input makes the signal unavailable.\n\n**Constructive checks:** price above the 50-day average; 50-day average above the 200-day average; MACD above its signal line; positive 3-month excess return versus SPY; RSI from 50 up to, but not including, 70.\n\n**Caution checks:** price below the 200-day average; MACD below its signal line; negative 3-month excess return versus SPY; RSI at or above 70; current price at least 20% below its 52-week high. An analyst Buy / Strong Buy can coexist with a Market Lens Sell because analyst consensus and this historical technical screen use different inputs and time horizons.")
+                    render_financial_table(pd.DataFrame(check_rows), key="research_technical_rating_checks")
+                    st.markdown("**Buy:** net score +2 or higher (constructive checks minus caution checks). **Hold:** net score −1, 0, or +1. **Sell:** net score −2 or lower. Each check has equal weight; a missing input makes the signal unavailable. The analyst consensus rating can differ because it reflects reported analyst opinions rather than historical technical conditions.")
             with tab_fundamentals:
-                st.markdown("#### Business profile & valuation")
-                st.caption(f"{info.get('sector') or 'Sector unavailable'} · {info.get('industry') or 'Industry unavailable'} · {info.get('fullTimeEmployees') or '—':,} employees" if isinstance(info.get('fullTimeEmployees'), (int,float)) else f"{info.get('sector') or 'Sector unavailable'} · {info.get('industry') or 'Industry unavailable'}")
+                render_section_heading("Business & valuation", "Provider-reported profile metrics and quarterly financial history.")
+                employee_note = f" · {info['fullTimeEmployees']:,} employees" if isinstance(info.get("fullTimeEmployees"), (int, float)) else ""
+                st.caption(f"{info.get('sector') or 'Sector unavailable'} · {info.get('industry') or 'Industry unavailable'}{employee_note}")
                 fund_rows = fundamentals_metric_table(info)
                 if tab_is_active(tab_fundamentals):
                     if payload.get("profile_status") == "error":
                         st.warning("Company profile fundamentals could not be retrieved.")
                     elif not info or fund_rows["Latest value"].eq("—").all():
                         st.info("Yahoo Finance did not return company profile fundamentals for this ticker.")
-                fund_left, fund_right = st.columns([1, 1])
-                with fund_left:
-                    st.dataframe(fund_rows.iloc[:7], use_container_width=True, hide_index=True)
-                with fund_right:
-                    st.dataframe(fund_rows.iloc[7:], use_container_width=True, hide_index=True)
+                with st.container(key="research_fundamental_groups"):
+                    fund_columns = st.columns(3)
+                    fund_groups = (
+                        ("Valuation & size", fund_rows.iloc[:6]),
+                        ("Growth & profitability", fund_rows.iloc[6:10]),
+                        ("Balance sheet & capital", fund_rows.iloc[10:]),
+                    )
+                    for col, (title, rows) in zip(fund_columns, fund_groups):
+                        with col:
+                            st.markdown(f"#### {title}")
+                            render_financial_table(rows, key=f"fundamentals_{title.casefold().replace(' ', '_').replace('&', 'and')}")
                 statement_result = load_tab_data_if_active(
                     tab_fundamentals, lambda: load_company_fundamentals(selected),
                     {"data":None, "status":"inactive", "message":None},
@@ -1176,9 +1296,12 @@ def run_app() -> None:
                     if q_table.empty:
                         st.info("A quarterly statement was returned, but it contained no supported income rows to display.")
                     else:
-                        st.markdown("#### Reported quarterly trend")
-                        st.dataframe(q_table, use_container_width=True,
-                                     column_config={column:st.column_config.NumberColumn(format="$%.2f" if column == "Diluted EPS" else "%.2f") for column in q_table.columns})
+                        render_section_heading("Reported quarterly trend", "Amounts are in billions except diluted EPS; periods are provider-reported.")
+                        render_financial_table(
+                            q_table,
+                            column_config={column:st.column_config.NumberColumn(format="$%.2f" if column == "Diluted EPS" else "$%.2f") for column in q_table.columns},
+                            key="reported_quarterly_trend",
+                        )
                 st.caption("Company metrics come from Yahoo Finance snapshots; definitions, reporting periods, and coverage can vary by issuer. Compare valuation within an appropriate peer group.")
             with tab_catalysts:
                 catalyst_data = load_tab_data_if_active(
@@ -1188,9 +1311,15 @@ def run_app() -> None:
                 )
                 for message in catalyst_data.get("_errors", {}).values():
                     st.warning(message)
+                render_section_heading("Analyst & company events", "Wall Street research, company calendar data, and filing links.")
                 cat_left, cat_right = st.columns([1,1])
                 with cat_left:
-                    st.markdown("#### Analyst expectations")
+                    st.markdown("#### Wall Street analyst consensus")
+                    if stats.get("analyst_rating"):
+                        st.metric("Current analyst consensus", stats["analyst_rating"], f"{stats['analyst_count']} analyst ratings")
+                    elif tab_is_active(tab_catalysts):
+                        st.info("Yahoo Finance did not return a sufficiently covered analyst consensus rating.")
+                    st.markdown("#### Analyst price targets")
                     targets = analyst_target_summary(catalyst_data.get("analyst_targets"), stats["last"])
                     target_mean = targets.get("mean") if targets else None
                     target_count = info.get("numberOfAnalystOpinions")
@@ -1207,8 +1336,8 @@ def run_app() -> None:
                     rec = payload.get("recommendations")
                     distribution = recommendation_distribution(rec)
                     if distribution is not None:
-                        st.markdown("**Latest rating distribution**")
-                        st.dataframe(distribution, use_container_width=True, hide_index=True)
+                        st.markdown("**Analyst recommendation distribution**")
+                        render_financial_table(distribution, key="analyst_recommendation_distribution")
                     elif tab_is_active(tab_catalysts):
                         if payload.get("recommendation_status") in {"error", "malformed"}:
                             st.warning(payload.get("recommendation_message") or "Analyst recommendation distribution is unavailable.")
@@ -1217,20 +1346,20 @@ def run_app() -> None:
                     revisions = eps_revision_table(catalyst_data.get("eps_revisions"))
                     if isinstance(revisions, pd.DataFrame) and not revisions.empty:
                         st.markdown("**EPS estimate revisions**")
-                        st.dataframe(revisions, use_container_width=True)
+                        render_financial_table(revisions, hide_index=False, key="analyst_eps_revisions")
                     elif "eps_revisions" not in catalyst_data.get("_errors", {}) and tab_is_active(tab_catalysts):
                         st.info("Yahoo Finance did not return EPS estimate revisions for this ticker.")
                     upgrades = catalyst_data.get("upgrades")
                     if isinstance(upgrades, pd.DataFrame) and not upgrades.empty:
                         st.markdown("**Recent analyst rating changes**")
-                        st.dataframe(upgrades.head(8), use_container_width=True)
+                        render_financial_table(upgrades.head(8), hide_index=False, key="analyst_rating_changes")
                     elif "upgrades" not in catalyst_data.get("_errors", {}) and tab_is_active(tab_catalysts):
                         st.info("Yahoo Finance did not return recent analyst rating changes for this ticker.")
                 with cat_right:
                     st.markdown("#### Earnings calendar")
                     dates = catalyst_data.get("earnings_dates")
                     if isinstance(dates, pd.DataFrame) and not dates.empty:
-                        st.dataframe(dates.head(6), use_container_width=True)
+                        render_financial_table(dates.head(6), hide_index=False, key="research_earnings_calendar")
                     else:
                         st.caption("No earnings dates were returned.")
                     st.markdown("#### Recent SEC filings")
@@ -1244,8 +1373,11 @@ def run_app() -> None:
                         if isinstance(filing, dict):
                             filing_rows.append({"Date":filing.get("date","—"),"Form":filing.get("type","—"),"Filing":filing.get("title","Open filing"),"URL":filing.get("url") or filing.get("link") or ""})
                     if filing_rows:
-                        st.dataframe(pd.DataFrame(filing_rows), use_container_width=True, hide_index=True,
-                                     column_config={"URL":st.column_config.LinkColumn("SEC / filing source")})
+                        render_financial_table(
+                            pd.DataFrame(filing_rows),
+                            column_config={"URL":st.column_config.LinkColumn("SEC / filing source")},
+                            key="research_sec_filings",
+                        )
                     else:
                         st.caption("No filing links returned (funds, non-US issuers, or data coverage may differ).")
                 st.caption("Analyst targets are third-party opinions, not price forecasts. Confirm dates and figures against original company releases and filings.")
@@ -1297,11 +1429,11 @@ def run_app() -> None:
                         if not visible_headlines:
                             st.info(f"No {sentiment_filter.lower()} headlines were returned for this ticker.")
                         for title, label, confidence, reason, publisher, published_at, link, topic in visible_headlines:
-                            badge = {"Bullish":"bull", "Bearish":"bear", "Neutral":"neutral"}[label]
-                            confidence_badge = "low" if confidence == "Low" else badge
-                            safe_link = link if urlparse(link).scheme in ("http", "https") else "#"
-                            safe_link = html.escape(safe_link, quote=True)
-                            st.markdown(f'<div class="news-row"><a class="news-title" href="{safe_link}" target="_blank" rel="noopener noreferrer">{html.escape(title)}</a><div class="news-meta">{html.escape(publisher)} &nbsp;·&nbsp; {html.escape(published_at)} &nbsp;·&nbsp; {html.escape(topic)} &nbsp;·&nbsp; <span class="pill {badge}">{label.upper()}</span> &nbsp; <span class="pill {confidence_badge}">{confidence.upper()} SIGNAL</span><br>{html.escape(reason)}</div></div>', unsafe_allow_html=True)
+                            render_headline_card(
+                                title=title, sentiment=label, confidence=confidence, topic=topic,
+                                publisher=publisher, published_at=published_at, reason=reason,
+                                source_url=link,
+                            )
 
                     st.write("")
 
@@ -1390,3 +1522,5 @@ def run_app() -> None:
 
 if __name__ == '__main__':
     run_app()
+
+
