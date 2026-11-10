@@ -1,10 +1,10 @@
-# Market Lens
+# Jujosmi Trade
 
-Market Lens is a local stock watchlist and research dashboard. It helps you observe market conditions, compare stocks and sectors, review company information and read recent headlines. It is a standalone viewer: it has no brokerage connection and cannot place trades.
+Jujosmi Trade is a local stock watchlist and research dashboard. It helps you observe market conditions, compare stocks and sectors, review company information and read recent headlines. It is a standalone viewer: it has no brokerage connection and cannot place trades.
 
 ## Light and dark appearance
 
-Market Lens includes a coordinated light palette and dark palette for the dashboard, sidebar, cards, chart, and floating terminology chat. Use Streamlit's app menu (⋮) and choose **Light**, **Dark**, or **System**. The default is dark.
+Jujosmi Trade includes a coordinated light palette and dark palette for the dashboard, sidebar, cards, chart, and floating terminology chat. Use Streamlit's app menu (⋮) and choose **Light**, **Dark**, or **System**. The default is dark.
 
 The Streamlit toolbar stays available so its appearance menu works. The main app entry point is `app.py`; `streamlit_app.py` is a compatibility wrapper for hosts that use Streamlit's default filename.
 
@@ -72,7 +72,7 @@ The supported interpreter is Python 3.14, recorded in `.python-version` and cons
 
 ## Put it on a Cloudflare website
 
-Cloudflare Pages hosts website files; it does not run this Streamlit/Python app as a static page. Host Market Lens separately (for example, deploy it from GitHub to Streamlit Community Cloud), then copy the responsive iframe snippet in [`website_embed/market-lens-iframe.html`](website_embed/market-lens-iframe.html) into the Cloudflare Pages site and replace its placeholder URL. Streamlit Community Cloud supports embedding public apps; private app embeds are not officially supported. The `?embed=true` view hides Streamlit's toolbar and surrounding padding. Read [`website_embed/README.md`](website_embed/README.md) for setup and hosted watchlist isolation instructions.
+Cloudflare Pages serves the public site at trade.jujosmi.com; its embedded Streamlit experience is guest-only and uses session-isolated watchlists. Authenticated users will enter the Streamlit app at its top-level URL rather than signing in inside the iframe. This repository contains local embed files, not the live Cloudflare or hosting settings. Preserve the current Streamlit origin and coordinate any future URL change with the hosting owner. Read website_embed/README.md for the local template and compatibility notes.
 
 The VIX is an options-implied measure of expected S&P 500 volatility over about 30 days; it does not indicate direction. See [Cboe's VIX FAQ](https://www.cboe.com/tradable_products/vix/faqs). Expected move is a volatility range, not a directional target or probability. The options fallback uses a small sample of near-the-money implied volatility quotes; it is not a constant-maturity volatility surface. Sector ETF returns are proxies and sector breadth is not the same as the share of all listed stocks above a trend threshold.
 

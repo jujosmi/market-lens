@@ -17,7 +17,7 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 MAX_HISTORY_MESSAGES = 10
 MAX_MESSAGE_CHARS = 1800
 
-SYSTEM_INSTRUCTIONS = """You are Market Lens's beginner-friendly markets terminology coach.
+SYSTEM_INSTRUCTIONS = """You are Jujosmi Trade's beginner-friendly markets terminology coach.
 Explain trading and investing language in plain English. Define jargon before using it,
 give a short example when helpful, and distinguish historical indicators from forecasts.
 You may explain concepts such as bid/ask spread, market cap, volume, beta, RSI, MACD,
@@ -63,20 +63,20 @@ def explain_from_glossary(question: str) -> str:
         "market cap": "Market capitalization is share price multiplied by shares outstanding. It describes the market value of a company's equity, not the company's cash or total enterprise value.",
         "volume": "Trading volume is the number of shares or contracts traded during a period. High volume can indicate more activity; volume alone does not tell you whether activity is bullish or bearish.",
         "beta": "Beta estimates how much an asset's returns have moved with a benchmark's returns. A beta above 1 has historically moved more than the benchmark on average; it is not a forecast.",
-        "rsi": "The Relative Strength Index (RSI) summarizes recent gains versus losses on a 0–100 scale. Market Lens uses Wilder's 14-period RSI. Above 70 is often called overbought and below 30 oversold, but neither level guarantees a reversal.",
-        "macd": "MACD compares shorter- and longer-term exponential moving averages. Market Lens compares the MACD line with its signal line; crossovers are historical momentum signals and can lag or whipsaw.",
-        "moving average": "A moving average is the mean price over a rolling number of observations. Market Lens requires every close in the named 20-, 50-, or 200-session window; it does not fill a short history with a partial average.",
-        "volatility": "Volatility describes how widely returns have varied. It does not describe direction. Market Lens's expected-move range is a one-standard-deviation estimate, not a price target.",
+        "rsi": "The Relative Strength Index (RSI) summarizes recent gains versus losses on a 0–100 scale. Jujosmi Trade uses Wilder's 14-period RSI. Above 70 is often called overbought and below 30 oversold, but neither level guarantees a reversal.",
+        "macd": "MACD compares shorter- and longer-term exponential moving averages. Jujosmi Trade compares the MACD line with its signal line; crossovers are historical momentum signals and can lag or whipsaw.",
+        "moving average": "A moving average is the mean price over a rolling number of observations. Jujosmi Trade requires every close in the named 20-, 50-, or 200-session window; it does not fill a short history with a partial average.",
+        "volatility": "Volatility describes how widely returns have varied. It does not describe direction. Jujosmi Trade's expected-move range is a one-standard-deviation estimate, not a price target.",
         "implied volatility": "Implied volatility is backed out from option prices and reflects the market's option pricing for future variability. It is not a direction signal or a guarantee of future movement.",
-        "realized volatility": "Realized volatility measures how much past returns varied. Market Lens annualizes the sample standard deviation of 30 daily returns using the square root of 252.",
+        "realized volatility": "Realized volatility measures how much past returns varied. Jujosmi Trade annualizes the sample standard deviation of 30 daily returns using the square root of 252.",
         "drawdown": "A drawdown is the percentage fall from a previous peak to a later value. It describes a past decline, not the probability or timing of a recovery.",
         "p/e": "The price-to-earnings (P/E) ratio compares share price with earnings per share. It can be misleading when earnings are negative, unusually high/low, or measured across different periods.",
         "eps": "Earnings per share (EPS) is a company's earnings allocated per share, using a stated share-count method. Compare the period and adjusted-versus-reported definition before interpreting it.",
-        "etf": "An exchange-traded fund (ETF) holds a basket of assets and trades on an exchange. Market Lens uses sector ETFs as proxies for sector performance; they are not the same as every stock in that sector.",
+        "etf": "An exchange-traded fund (ETF) holds a basket of assets and trades on an exchange. Jujosmi Trade uses sector ETFs as proxies for sector performance; they are not the same as every stock in that sector.",
         "short interest": "Short interest is the number of shares sold short and not yet covered, usually reported periodically. It can be stale and does not by itself predict a short squeeze or price decline.",
         "support resistance": "Support and resistance are chart-analysis terms for price areas where trading previously paused or reversed. They are interpretations of past price action, not guaranteed floors or ceilings.",
-        "limit order": "A limit order sets the worst price you are willing to accept: a maximum buy price or minimum sell price. It may not execute. Market Lens is read-only and does not place orders.",
-        "market order": "A market order seeks execution promptly at available prices, but the final price can differ from the last quote, especially in fast or illiquid markets. Market Lens cannot place orders.",
+        "limit order": "A limit order sets the worst price you are willing to accept: a maximum buy price or minimum sell price. It may not execute. Jujosmi Trade is read-only and does not place orders.",
+        "market order": "A market order seeks execution promptly at available prices, but the final price can differ from the last quote, especially in fast or illiquid markets. Jujosmi Trade cannot place orders.",
         "earnings guidance": "Guidance is management's outlook for future business results. It is a company estimate, can change, and is not a guarantee.",
     }
     lowered = " ".join(question.lower().replace("/", " ").split())

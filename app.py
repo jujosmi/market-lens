@@ -51,7 +51,7 @@ LOGGER = logging.getLogger("market_lens.app")
 
 def configure_app() -> None:
     global ACTIVE_THEME, LIGHT_THEME, THEME_COLORS, HOSTED_MODE
-    st.set_page_config(page_title="Market Lens", page_icon="◉", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="Jujosmi Trade", page_icon="◉", layout="wide", initial_sidebar_state="expanded")
 
 
     try:
@@ -730,7 +730,7 @@ def run_app() -> None:
     configure_app()
     with st.sidebar:
         st.markdown('<a class="jujosmi-home-link" href="https://jujosmi.com" target="_blank" rel="noopener noreferrer" aria-label="Visit jujosmi.com"><img src="app/static/jujosmi-logo-simple-shadow.png" alt="Jujosmi"></a>', unsafe_allow_html=True)
-        st.markdown('<div class="brand">◉ &nbsp; MARKET LENS</div>', unsafe_allow_html=True)
+        st.markdown('<div class="brand">◉ &nbsp; JUJOSMI TRADE</div>', unsafe_allow_html=True)
         initialize_workspace_state(st.session_state)
         with st.container(key="market_lens_workspace_nav"):
             st.caption("WORKSPACES")
@@ -793,7 +793,7 @@ def run_app() -> None:
         "Company Research":"Explore technical, financial, analyst, and headline research for the selected ticker.",
         "Watchlist":"Compare the current watchlist and filter companies by industry.",
     }
-    st.markdown('<div class="hero"><div class="eyebrow">Professional intelligence · simplified</div><h1>Market Lens</h1></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><div class="eyebrow">Professional intelligence · simplified</div><h1>Jujosmi Trade</h1></div>', unsafe_allow_html=True)
     st.markdown(f"## {workspace}")
     st.markdown(f'<div class="sub">{html.escape(workspace_descriptions[workspace])}</div>', unsafe_allow_html=True)
 
@@ -855,7 +855,7 @@ def run_app() -> None:
                     ("30-day expected range", f"±{stats['move']*100:.1f}%" if np.isfinite(stats['move']) else "Unavailable",
                      f"Non-directional volatility range · {stats['move_source']}", move_explanation, "accent"),
                     ("Trend read", stats["state"], trend_note, trend_explanation(stats), ""),
-                    ("MarketLens technical rating", stats["technical_rating"],
+                    ("Jujosmi Trade technical rating", stats["technical_rating"],
                      f"{stats['constructive_checks']} constructive · {stats['caution_checks']} caution · {analyst_note}",
                      rating_explanation(technical_stats), "accent"),
                 ]
@@ -1024,11 +1024,11 @@ def run_app() -> None:
                         ))
                         company_ratings = rate_industry_companies(company_symbols)
                         company_display.insert(
-                            0, "Market Lens rating",
+                            0, "Jujosmi Trade rating",
                             [company_ratings.get(str(symbol).strip().upper(), "Unavailable") for symbol in company_display.index],
                         )
                         st.dataframe(company_display, use_container_width=True)
-                        st.caption("Company lists use Yahoo Finance's industry listings. If those are unavailable, Discovery shows only sector top companies whose Yahoo profile industryKey or exact industry and sector fields confirm the selected category. Market Lens ratings use analyst consensus (at least 3 ratings), then the snapshot's technical screen as fallback. Unavailable means required price history or benchmark data was incomplete.")
+                        st.caption("Company lists use Yahoo Finance's industry listings. If those are unavailable, Discovery shows only sector top companies whose Yahoo profile industryKey or exact industry and sector fields confirm the selected category. Jujosmi Trade ratings use analyst consensus (at least 3 ratings), then the snapshot's technical screen as fallback. Unavailable means required price history or benchmark data was incomplete.")
                         company_frame = companies.reset_index()
                         symbol_column = next((col for col in company_frame.columns if str(col).lower() in ("symbol", "ticker")), None)
                         name_column = next((col for col in company_frame.columns if str(col).lower() in ("name", "company", "shortname")), None)
@@ -1251,7 +1251,7 @@ def run_app() -> None:
                 positives = stats["constructive_checks"]
                 risks = stats["caution_checks"]
                 rating_coverage = "all required checks available" if stats["rating_checks_complete"] else "missing inputs prevent a rating"
-                st.markdown(f"**MarketLens technical screen: {stats['technical_rating']}** · {positives} constructive checks vs {risks} caution checks · {rating_coverage}.")
+                st.markdown(f"**Jujosmi Trade technical screen: {stats['technical_rating']}** · {positives} constructive checks vs {risks} caution checks · {rating_coverage}.")
                 st.caption("This rule-based technical label is separate from Wall Street analyst consensus. Buy means at least 2 more constructive than caution checks; Sell means at least 2 more caution than constructive; Hold means the counts are within 1. All 10 checks must be available. It is not a forecast or a personal instruction to trade.")
                 with st.expander("See the technical rating checks"):
                     check_rows = [
@@ -1393,7 +1393,7 @@ def run_app() -> None:
                         st.caption(news_warning)
                     with st.expander("How the headline classifier works and what the research says"):
                         st.markdown("**Bullish** and **Bearish** require a clear directional score plus company-related context. **Neutral** is used when a headline is generic market coverage, does not clearly relate to the selected company, contains only weak wording, or has conflicting positive and negative cues. A single word such as *warning*, *probe*, or *recall* no longer automatically makes a story bearish. Nearby negation is checked for phrases such as **not beating estimates** or **approval denied**. Signal strength is a heuristic, not a probability or a forecast.")
-                        st.markdown("Financial language depends on context: [Loughran and McDonald’s research](https://onlinelibrary.wiley.com/doi/10.1111/j.1540-6261.2010.01625.x) found general-purpose negative word lists misclassify many terms in financial texts. [FinBERT](https://arxiv.org/abs/1908.10063) uses finance-trained context and three sentiment classes; Market Lens uses a transparent local ruleset, not a trained FinBERT model, so ambiguous headlines are now explicitly left Neutral.")
+                        st.markdown("Financial language depends on context: [Loughran and McDonald’s research](https://onlinelibrary.wiley.com/doi/10.1111/j.1540-6261.2010.01625.x) found general-purpose negative word lists misclassify many terms in financial texts. [FinBERT](https://arxiv.org/abs/1908.10063) uses finance-trained context and three sentiment classes; Jujosmi Trade uses a transparent local ruleset, not a trained FinBERT model, so ambiguous headlines are now explicitly left Neutral.")
                     if not tab_is_active(tab_headlines):
                         st.info("Select Headlines & sentiment to load recent company news.")
                     elif not news:
@@ -1467,7 +1467,7 @@ def run_app() -> None:
                              column_config={"Last":st.column_config.NumberColumn(format="$%.2f"),"Day":st.column_config.NumberColumn(format="%+.2f%%"),"30d range":st.column_config.NumberColumn(format="±%.1f%%")})
 
 
-    st.caption("Market Lens is an informational dashboard. Price, fundamentals, analyst data and third-party headlines are sourced through Yahoo Finance / yfinance; they may be delayed, incomplete or rate limited. Company filings link to SEC EDGAR when supplied by the feed. [yfinance project and usage notes](https://ranaroussi.github.io/yfinance/). Headline tags and market signals are rough analytical aids, not financial advice or forecasts.")
+    st.caption("Jujosmi Trade is an informational dashboard. Price, fundamentals, analyst data and third-party headlines are sourced through Yahoo Finance / yfinance; they may be delayed, incomplete or rate limited. Company filings link to SEC EDGAR when supplied by the feed. [yfinance project and usage notes](https://ranaroussi.github.io/yfinance/). Headline tags and market signals are rough analytical aids, not financial advice or forecasts.")
     chat_position = st.session_state.get("market_lens_chat_position")
     if isinstance(chat_position, dict):
         try:
@@ -1513,7 +1513,7 @@ def run_app() -> None:
                     st.rerun()
 
     # Tell the website embed that the dashboard has rendered. The parent page uses
-    # this signal to keep Streamlit's startup header covered until Market Lens is ready.
+    # this signal to keep Streamlit's startup header covered until Jujosmi Trade is ready.
     components.html(
         '<script>window.parent.parent.postMessage({type:"market-lens-ready",token:"market-lens-ready-v1"},"*");</script>',
         height=1,

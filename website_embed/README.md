@@ -1,12 +1,12 @@
-# Add Market Lens to the Cloudflare website
+# Add Jujosmi Trade to the Cloudflare website
 
-Market Lens is a Streamlit/Python application. Cloudflare Pages serves the website files, but it does not run this Streamlit app as a static page. Host the Streamlit app separately, then place the iframe from [`market-lens-iframe.html`](market-lens-iframe.html) in the Cloudflare Pages site. The iframe stays responsive and shows the compact Streamlit embed view.
+Jujosmi Trade is a Streamlit/Python application. Cloudflare Pages serves the public site at trade.jujosmi.com; the embedded Streamlit experience remains guest-only with session-isolated watchlists. Authenticated users will open the Streamlit application at its top-level URL rather than sign in inside the iframe. The live Cloudflare configuration and authenticated app URL are not stored in this repository.
 
-## 1. Publish the app from GitHub
+## 1. Preserve the existing Streamlit host
 
-Put this project folder in a GitHub repository. In Streamlit Community Cloud, create an app that uses `app.py` as its entrypoint and the repository's `requirements.txt`. Streamlit's official guide describes this GitHub-based deployment flow and the dependency file requirements: [deploy an app](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy), [app dependencies](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies).
+This branding update does not create a new Streamlit app or change its hosting origin. The checked-in index.html contains the current local embed target; it is not proof of the live Cloudflare iframe URL. Keep the deployed guest iframe pointed at its existing origin. The market-lens-iframe.html template is for coordinated local edits; copy its branding to Cloudflare only during a separately approved deployment update.
 
-Community Cloud supports embedding **public** apps; private app embeds are not officially supported. If the dashboard must be private, deploy Streamlit on an authenticated host you control instead of making the Community Cloud app public. See Streamlit's [embed guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/share-your-app/embed-your-app).
+The authenticated experience is planned for a direct, top-level Streamlit visit. Its URL and callback settings are controlled by hosting/auth configuration outside this repository. Do not place sign-in inside the guest iframe.
 
 ## 2. Protect per-visitor watchlists
 
@@ -42,7 +42,7 @@ with the public URL Streamlit gives the deployed app. The `?embed=true` paramete
 https://market-lens.streamlit.app/?embed=true
 ```
 
-The hover explanations and draggable assistant operate inside the Market Lens iframe. The assistant does not float over other Cloudflare page elements outside that iframe.
+The hover explanations and draggable assistant operate inside the Jujosmi Trade iframe. The assistant does not float over other Cloudflare page elements outside that iframe.
 
 ## 5. Local check
 

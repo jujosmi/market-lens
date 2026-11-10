@@ -203,9 +203,10 @@ class NavigationStateTests(unittest.TestCase):
             self.assertFalse(at.exception, [item.value for item in at.exception])
             self.assertEqual(at.session_state[WORKSPACE_KEY], "Market Overview")
             self.assertTrue(any("Selected ticker snapshot" in item.value for item in at.markdown))
+            self.assertTrue(any("Jujosmi Trade" in item.value for item in at.markdown))
             self.assertTrue(any("Selected security" in item.value for item in at.markdown))
             self.assertTrue(any("Nasdaq Global Select Market" in item.value for item in at.markdown))
-            self.assertTrue(any("MarketLens technical rating" in item.value for item in at.markdown))
+            self.assertTrue(any("Jujosmi Trade technical rating" in item.value for item in at.markdown))
             self.assertTrue(any("Non-directional volatility range" in item.value for item in at.markdown))
             self.assertEqual(core_loader.call_count, 1)
 

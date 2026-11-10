@@ -12,7 +12,7 @@ class ReadingExplanationTests(unittest.TestCase):
 
     def test_unavailable_rating_explains_incomplete_history(self):
         text = rating_explanation({"rating":"Unavailable", "rating_checks_complete":False})
-        self.assertIn("No Market Lens signal is shown", text)
+        self.assertIn("No Jujosmi Trade signal is shown", text)
         self.assertIn("technical-history inputs are unavailable", text)
 
     def test_trend_explains_history_requirement(self):

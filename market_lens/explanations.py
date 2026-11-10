@@ -24,11 +24,11 @@ def rating_explanation(stats: dict) -> str:
         missing = [check["label"] for check in checks if check["passed"] is None]
         sample = "; ".join(missing[:2])
         more = "…" if len(missing) > 2 else ""
-        return (f"No Market Lens signal is shown because {len(missing)} of 10 technical checks are unavailable: "
+        return (f"No Jujosmi Trade signal is shown because {len(missing)} of 10 technical checks are unavailable: "
                 f"{sample}{more}. The screen requires complete 50/200-day trend, MACD, 3-month relative-return, "
                 "RSI, and 52-week drawdown inputs. Analyst consensus is a separate measure.")
     if not checks_complete:
-        return ("No Market Lens signal is shown because one or more full technical-history inputs are unavailable. "
+        return ("No Jujosmi Trade signal is shown because one or more full technical-history inputs are unavailable. "
                 "The analyst consensus rating, if shown elsewhere, is a separate measure.")
 
     positives = [check["label"] for check in checks or []
@@ -43,7 +43,7 @@ def rating_explanation(stats: dict) -> str:
         details.append("caution: " + "; ".join(cautions[:2]) + ("; …" if len(cautions) > 2 else ""))
     signals = " Passed checks: " + " | ".join(details) + "." if details else " No directional checks passed."
     rating = stats.get("rating", threshold)
-    return (f"{rating} is Market Lens's technical screen: {constructive}/5 constructive minus {caution}/5 caution "
+    return (f"{rating} is Jujosmi Trade's technical screen: {constructive}/5 constructive minus {caution}/5 caution "
             f"checks = {net:+d}. Buy requires +2 or more; Sell requires −2 or less; Hold is −1 to +1. "
             f"All 10 checks must be available. Analyst consensus may differ.{signals} This is a screening label, not a trade recommendation.")
 

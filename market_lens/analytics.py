@@ -249,7 +249,7 @@ def analyze(history: pd.DataFrame, info: dict | None = None,
     # Analyst consensus is the headline rating when at least three analysts report;
     # technical checks remain visible as context rather than overruling it on a dip.
     rating = consensus["rating"] or technical_rating
-    rating_source = "Wall Street analyst consensus" if consensus["rating"] else "Market Lens technical screen"
+    rating_source = "Wall Street analyst consensus" if consensus["rating"] else "Jujosmi Trade technical screen"
 
     if np.isfinite(sma200):
         above50_200 = last > sma50 > sma200 if np.isfinite(sma50) else False
