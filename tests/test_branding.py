@@ -30,7 +30,10 @@ class PublicBrandingTests(unittest.TestCase):
         self.assertTrue(logo.is_file())
         self.assertIn("jujosmi-logo-simple-shadow.png", source)
         self.assertIn("JUJOSMI TRADE", source)
-        self.assertIn("<h1>Jujosmi Trade</h1>", source)
+        self.assertIn("render_workspace_heading(", source)
+        self.assertIn("Jujosmi Trade · Professional intelligence, simplified", source)
+        components = (ROOT / "market_lens" / "ui" / "components.py").read_text(encoding="utf-8-sig")
+        self.assertIn('<h1>{escape(title)}</h1>', components)
 
     def test_embed_branding_keeps_existing_origin_and_ready_message(self):
         app_source = (ROOT / "app.py").read_text(encoding="utf-8")

@@ -38,7 +38,7 @@ from market_lens.research import (
 )
 from market_lens.storage import load_watchlist, save_watchlist
 from market_lens.ui.components import (
-    render_company_header, render_financial_table, render_headline_card, render_metric_card, render_section_heading,
+    render_company_header, render_financial_table, render_headline_card, render_metric_card, render_section_heading, render_workspace_heading,
 )
 from market_lens.ui.navigation import (
     WORKSPACES, WORKSPACE_KEY, initialize_workspace_state,
@@ -96,6 +96,7 @@ def configure_app() -> None:
       --bear:var(--market-lens-bear,color-mix(in srgb,var(--ink) 48%,#d64555));
       --caution:var(--market-lens-caution,color-mix(in srgb,var(--ink) 48%,#bd7900));
     }
+    [data-testid="stMainBlockContainer"] { max-width:1680px; padding-top:26px; padding-bottom:72px; }
     html, body, [class*="css"] { font-family:var(--market-lens-font-body,'Manrope',system-ui,sans-serif); }
     [data-testid="stSidebar"] { background:var(--market-lens-sidebar,var(--secondary-background-color,#0e191c)); border-right:1px solid var(--line); }
     h1,h2,h3 { letter-spacing:-.04em !important; }
@@ -103,9 +104,13 @@ def configure_app() -> None:
     .st-key-market_lens_workspace_nav label { border:1px solid transparent; border-radius:10px; padding:5px 8px; }
     .st-key-market_lens_workspace_nav label:focus-within { outline:2px solid var(--mint); outline-offset:2px; }
     .st-key-market_lens_workspace_nav label:has(input:checked) { background:color-mix(in srgb,var(--mint) 12%,var(--panel)); border-color:var(--line); }
+    .workspace-heading { padding:8px 0 22px; margin:0 0 20px; border-bottom:1px solid var(--line); }
+    .workspace-eyebrow { color:var(--mint); text-transform:uppercase; letter-spacing:.14em; font-size:10px; font-weight:800; }
+    .workspace-heading h1 { color:var(--ink); font-size:clamp(30px,3.2vw,42px); line-height:1.12; margin:7px 0 6px; letter-spacing:-.045em; }
+    .workspace-heading p { color:var(--muted); font-size:14px; line-height:1.55; margin:0; max-width:760px; }
     .brand { font-size:12px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; color:var(--mint); }
     .jujosmi-home-link { display:block; margin:0 0 18px; line-height:0; }
-    .jujosmi-home-link img { display:block; width:min(100%,205px); max-height:62px; object-fit:contain; object-position:left center; }
+    .jujosmi-home-link img { display:block; width:min(100%,205px); max-height:54px; object-fit:contain; object-position:left center; }
     .hero { padding:10px 0 24px; }
     .quick-nav { display:flex; flex-wrap:wrap; gap:8px; margin:-8px 0 22px; }
     .quick-nav a { display:inline-flex; align-items:center; padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:color-mix(in srgb,var(--panel) 88%,transparent); color:var(--ink); font-size:12px; font-weight:700; text-decoration:none; transition:background .15s ease,border-color .15s ease,transform .15s ease; }
@@ -117,6 +122,19 @@ def configure_app() -> None:
     .snapshot-security { font-size:.56em; font-weight:600; color:var(--muted); letter-spacing:0; vertical-align:middle; white-space:normal; }
     .sub { color:var(--muted); font-size:14px; }
     .panel { background:linear-gradient(145deg,color-mix(in srgb,var(--panel) 96%,var(--mint) 4%),var(--panel)); border:1px solid var(--line); border-radius:18px; padding:20px 22px; height:100%; }
+    .stMainBlockContainer button, .stMainBlockContainer [role="button"] { transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease; }
+    .stMainBlockContainer button:focus-visible, .stMainBlockContainer a:focus-visible,
+    .stMainBlockContainer input:focus-visible, .stMainBlockContainer [role="radio"]:focus-visible,
+    [data-testid="stSidebar"] button:focus-visible, [data-testid="stSidebar"] input:focus-visible {
+      outline:2px solid var(--mint) !important; outline-offset:2px !important;
+    }
+    .stMainBlockContainer [data-testid="stTextInput"] input,
+    .stMainBlockContainer [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+    .stMainBlockContainer [data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+      background:var(--panel); border-color:var(--line); border-radius:10px;
+    }
+    .stMainBlockContainer [data-testid="stAlert"] { border-radius:12px; }
+    .stMainBlockContainer [data-testid="stSpinner"] { color:var(--muted); }
     .metric-label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; }
     .metric-value { font-family:var(--market-lens-font-financial,'DM Mono',monospace); font-size:26px; font-weight:500; margin-top:8px; color:var(--ink); }
     .metric-note { color:var(--muted); font-size:12px; margin-top:5px; }
@@ -167,12 +185,15 @@ def configure_app() -> None:
     .section-heading h2 { margin:2px 0 4px; font-size:22px; letter-spacing:-.03em; }
     .section-eyebrow { color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
     .section-description { color:var(--muted); font-size:13px; line-height:1.5; }
-    .metric-card { min-height:136px; display:flex; flex-direction:column; }
+    .metric-card { min-height:126px; display:flex; flex-direction:column; }
     .metric-card.positive { border-top:2px solid var(--bull); }
     .metric-card.negative { border-top:2px solid var(--bear); }
     .metric-card.accent { border-top:2px solid var(--mint); }
     .metric-value { font-variant-numeric:tabular-nums; }
     .metric-note { line-height:1.45; }
+    .st-key-market_chart_shell [data-testid="stVerticalBlockBorderWrapper"] { padding:20px clamp(14px,2vw,28px); }
+    .st-key-market_chart_shell [data-testid="stPlotlyChart"] { margin-top:4px; }
+    .st-key-market_snapshot_metrics [data-testid="stVerticalBlockBorderWrapper"] { margin-top:0; }
     .chart-control-caption { margin:10px 0 3px; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
     .st-key-market_chart_controls { padding:12px 14px 8px; margin:8px 0 12px; border:1px solid var(--line); border-radius:12px; background:color-mix(in srgb,var(--panel) 88%,transparent); }
     .st-key-market_chart_controls [data-testid="stRadio"] div[role="radiogroup"] { display:flex; flex-wrap:wrap; gap:5px 9px; }
@@ -193,19 +214,49 @@ def configure_app() -> None:
       .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"] > div, .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] > div, .st-key-research_indicator_groups [data-testid="stHorizontalBlock"] > div, .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] > div { width:100% !important; min-width:0 !important; }
     }
     @media (max-width: 640px) {
-      .company-header { grid-template-columns:minmax(0,1fr); gap:12px; padding:16px; }
+      [data-testid="stMainBlockContainer"] { padding:12px 12px 48px; }
+      .workspace-heading { padding:4px 0 14px; margin:0 0 14px; }
+      .workspace-eyebrow { font-size:9px; letter-spacing:.1em; line-height:1.5; }
+      .workspace-heading h1 { font-size:27px; margin:4px 0; }
+      .workspace-heading p { font-size:13px; line-height:1.45; }
+      .panel { padding:16px; border-radius:14px; }
+      .st-key-market_chart_shell [data-testid="stVerticalBlockBorderWrapper"] { padding:12px 10px; }
+      .st-key-market_chart_controls { padding:10px; margin:6px 0 10px; }
+      .st-key-market_chart_controls [data-testid="stHorizontalBlock"] { gap:6px; }
+      .st-key-market_chart_controls [data-testid="stRadio"] div[role="radiogroup"] { gap:4px 6px; }
+      .st-key-market_chart_controls [data-testid="stRadio"] label { min-height:40px; }
+      .st-key-market_chart_shell [data-testid="stPlotlyChart"] { max-width:100%; min-width:0; }
+      .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"], .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] { grid-template-columns:minmax(0,1fr); gap:8px; }
+      .st-key-market_snapshot_metrics .metric-card, .st-key-market_pulse_metrics .metric-card { min-height:0; }
+      .st-key-market_snapshot_metrics .metric-value, .st-key-market_pulse_metrics .metric-value { font-size:23px; }
+      .company-identity h2 { font-size:22px; }
+      .company-price-block { min-width:0; text-align:left; }
+      .news-row { padding:12px; margin:8px 0; }
+      .news-title { font-size:14px; line-height:1.45; }
+      .st-key-research_indicator_groups [data-testid="stHorizontalBlock"], .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] { gap:8px; }
+      .st-key-research_indicator_groups .metric-card, .st-key-research_fundamental_groups .metric-card { min-height:0; }
+      div[data-testid="stDataFrame"] { max-width:100%; min-width:0; overflow-x:auto; }
+      .st-key-market_lens_workspace_nav label { min-height:42px; padding:8px 10px; }
+      .stMainBlockContainer [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+      .stMainBlockContainer [data-testid="stButton"] button { min-height:42px; }
+      .stMainBlockContainer [data-testid="stExpander"] summary { min-height:44px; }
+      .st-key-market_lens_ai_helper { right:10px !important; bottom:10px !important; }
+      .company-header { grid-template-columns:minmax(0,1fr); gap:10px; padding:14px; margin:4px 0 14px; }
       .company-price-block { text-align:left; }
-      .company-freshness { grid-column:auto; flex-direction:column; gap:2px; }
-      .hero h1 { font-size:32px; }
+      .company-freshness { grid-column:auto; flex-direction:column; gap:2px; padding-top:8px; }
       .section-heading h2 { font-size:20px; }
       .st-key-market_chart_controls [data-testid="stHorizontalBlock"] { grid-template-columns:minmax(0,1fr); }
-      .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"], .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-      .st-key-market_snapshot_metrics [data-testid="stHorizontalBlock"] > div, .st-key-market_pulse_metrics [data-testid="stHorizontalBlock"] > div { width:100% !important; min-width:0 !important; }
       .st-key-research_indicator_groups [data-testid="stHorizontalBlock"], .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] { display:grid !important; grid-template-columns:minmax(0,1fr); gap:12px; }
       .st-key-research_indicator_groups [data-testid="stHorizontalBlock"] > div, .st-key-research_fundamental_groups [data-testid="stHorizontalBlock"] > div { width:100% !important; min-width:0 !important; }
       .stTabs [data-baseweb="tab-list"] { gap:4px; overflow-x:auto; }
       .stTabs [data-baseweb="tab"] { min-height:42px; font-size:12px; }
       .company-freshness,.news-meta { overflow-wrap:anywhere; }
+    }
+    @media (max-width: 430px) {
+      [data-testid="stMainBlockContainer"] { padding-left:10px; padding-right:10px; }
+      .st-key-market_chart_shell [data-testid="stVerticalBlockBorderWrapper"] { padding:10px 8px; }
+      .workspace-heading h1 { font-size:25px; }
+      .st-key-market_lens_ai_helper { right:8px !important; bottom:8px !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -793,9 +844,10 @@ def run_app() -> None:
         "Company Research":"Explore technical, financial, analyst, and headline research for the selected ticker.",
         "Watchlist":"Compare the current watchlist and filter companies by industry.",
     }
-    st.markdown('<div class="hero"><div class="eyebrow">Professional intelligence · simplified</div><h1>Jujosmi Trade</h1></div>', unsafe_allow_html=True)
-    st.markdown(f"## {workspace}")
-    st.markdown(f'<div class="sub">{html.escape(workspace_descriptions[workspace])}</div>', unsafe_allow_html=True)
+    render_workspace_heading(
+        workspace, workspace_descriptions[workspace],
+        eyebrow="Jujosmi Trade · Professional intelligence, simplified",
+    )
 
     payload = context = stats = history = info = history_meta = None
     if workspace_requires_ticker_data(workspace):
@@ -838,8 +890,60 @@ def run_app() -> None:
 
     if workspace == "Market Overview":
         st.markdown('<div id="selected-ticker" class="section-anchor"></div>', unsafe_allow_html=True)
+        with st.container(border=True, key="market_chart_shell"):
+            render_section_heading("Price chart", "Historical price action with selectable interval, range, style, and moving averages.", "Primary view")
+            interval_options = ["15 minute", "30 minute", "1 hour", "2 hours", "12 hours", "1 day"]
+            with st.container(key="market_chart_controls"):
+                chart_controls = st.columns([1.2, 1.15, 1.55, 1.05])
+                with chart_controls[0]:
+                    chart_interval = st.selectbox("Bar interval", interval_options, index=5, key="market_chart_interval")
+                chart_window_options = (["1D", "5D", "1M", "2M", "Max"] if chart_interval != "1 day"
+                                        else ["1M", "3M", "6M", "1Y", "2Y", "5Y", "Max"])
+                default_window = "6M" if chart_interval == "1 day" else "5D"
+                if st.session_state.get("market_chart_range") not in chart_window_options:
+                    st.session_state["market_chart_range"] = default_window
+                average_unit = "day" if chart_interval == "1 day" else "bar"
+                average_options = [f"20 {average_unit}", f"50 {average_unit}", f"200 {average_unit}"]
+                default_averages = average_options[:2]
+                selected_averages = st.session_state.get("market_chart_averages")
+                if selected_averages is None or not set(selected_averages).issubset(average_options):
+                    st.session_state["market_chart_averages"] = default_averages
+                with chart_controls[1]:
+                    chart_type = st.selectbox("Chart style", ["Candles", "Line"], key="market_chart_style")
+                with chart_controls[2]:
+                    chart_averages = st.multiselect("Moving averages", average_options, key="market_chart_averages")
+                with chart_controls[3]:
+                    open_fullscreen = st.button("⛶ Fullscreen", key="market_chart_open_fullscreen", use_container_width=True)
+                st.markdown('<div class="chart-control-caption">Visible period</div>', unsafe_allow_html=True)
+                chart_window = st.radio(
+                    "Chart period", chart_window_options, horizontal=True,
+                    label_visibility="collapsed", key="market_chart_range",
+                )
+            st.markdown(f'<div class="smallcaps">Price action · {chart_window} · {chart_interval} · {chart_type.lower()}</div>', unsafe_allow_html=True)
+            with st.spinner(f"Loading {chart_interval} chart data for {selected}…"):
+                if chart_interval == "1 day" and chart_window not in {"5Y", "Max"}:
+                    chart_history, chart_error = history, None
+                else:
+                    chart_history, chart_error = load_chart_history(selected, chart_interval)
+            if chart_history.empty:
+                st.warning(f"Chart data is unavailable: {chart_error or 'no rows were returned.'}")
+            else:
+                price_figure = price_chart(
+                    chart_history, selected, light_mode=LIGHT_THEME, chart_type=chart_type,
+                    window=chart_window, overlays=chart_averages, interval=chart_interval,
+                )
+                if chart_interval != "1 day":
+                    st.caption("Intraday history is limited to about 60 days. 2-hour and 12-hour bars are aggregated from hourly data.")
+                st.plotly_chart(
+                    price_figure, use_container_width=True, key="market_chart_main",
+                    config={"displayModeBar":True, "displaylogo":False, "scrollZoom":True,
+                            "responsive":True, "modeBarButtonsToAdd":["drawline", "drawopenpath", "eraseshape"]},
+                )
+                if open_fullscreen:
+                    show_fullscreen_chart(price_figure, selected)
+
         with st.container(border=True):
-            render_section_heading("Selected ticker snapshot", f"{stats.get('name') or selected} ({selected})")
+            render_section_heading("Selected ticker snapshot", f"{stats.get('name') or selected} ({selected})", "Key readings")
             with st.container(key="market_snapshot_metrics"):
                 cols = st.columns(4)
                 move_explanation = ("A one-standard-deviation 30-day range from " + stats["move_source"] + ". This describes possible variability, not whether price is expected to rise or fall.")
@@ -863,86 +967,29 @@ def run_app() -> None:
                     with col:
                         render_metric_card(label, value, note, explanation, tone)
 
-            st.write("")
-            left, right = st.columns([1.55, 1])
-            with left:
-                st.markdown('<div class="panel">', unsafe_allow_html=True)
-                interval_options = ["15 minute", "30 minute", "1 hour", "2 hours", "12 hours", "1 day"]
-                with st.container(key="market_chart_controls"):
-                    chart_controls = st.columns([1.2, 1.15, 1.55, 1.05])
-                    with chart_controls[0]:
-                        chart_interval = st.selectbox("Bar interval", interval_options, index=5, key="market_chart_interval")
-                    chart_window_options = (["1D", "5D", "1M", "2M", "Max"] if chart_interval != "1 day"
-                                            else ["1M", "3M", "6M", "1Y", "2Y", "5Y", "Max"])
-                    default_window = "6M" if chart_interval == "1 day" else "5D"
-                    if st.session_state.get("market_chart_range") not in chart_window_options:
-                        st.session_state["market_chart_range"] = default_window
-                    average_unit = "day" if chart_interval == "1 day" else "bar"
-                    average_options = [f"20 {average_unit}", f"50 {average_unit}", f"200 {average_unit}"]
-                    default_averages = average_options[:2]
-                    selected_averages = st.session_state.get("market_chart_averages")
-                    if selected_averages is None or not set(selected_averages).issubset(average_options):
-                        st.session_state["market_chart_averages"] = default_averages
-                    with chart_controls[1]:
-                        chart_type = st.selectbox("Chart style", ["Candles", "Line"], key="market_chart_style")
-                    with chart_controls[2]:
-                        chart_averages = st.multiselect("Moving averages", average_options, key="market_chart_averages")
-                    with chart_controls[3]:
-                        open_fullscreen = st.button("⛶ Fullscreen", key="market_chart_open_fullscreen", use_container_width=True)
-                    st.markdown('<div class="chart-control-caption">Visible period</div>', unsafe_allow_html=True)
-                    chart_window = st.radio(
-                        "Chart period", chart_window_options, horizontal=True,
-                        label_visibility="collapsed", key="market_chart_range",
-                    )
-                st.markdown(f'<div class="smallcaps">Price action · {chart_window} · {chart_interval} · {chart_type.lower()}</div>', unsafe_allow_html=True)
-                with st.spinner(f"Loading {chart_interval} chart data for {selected}…"):
-                    if chart_interval == "1 day" and chart_window not in {"5Y", "Max"}:
-                        chart_history, chart_error = history, None
-                    else:
-                        chart_history, chart_error = load_chart_history(selected, chart_interval)
-                if chart_history.empty:
-                    st.warning(f"Chart data is unavailable: {chart_error or 'no rows were returned.'}")
-                else:
-                    price_figure = price_chart(
-                        chart_history, selected, light_mode=LIGHT_THEME, chart_type=chart_type,
-                        window=chart_window, overlays=chart_averages, interval=chart_interval,
-                    )
-                    if chart_interval != "1 day":
-                        st.caption("Intraday history is limited to about 60 days. 2-hour and 12-hour bars are aggregated from hourly data.")
-                    st.plotly_chart(
-                        price_figure, use_container_width=True, key="market_chart_main",
-                        config={"displayModeBar":True, "displaylogo":False, "scrollZoom":True,
-                                "responsive":True, "modeBarButtonsToAdd":["drawline", "drawopenpath", "eraseshape"]},
-                    )
-                    if open_fullscreen:
-                        show_fullscreen_chart(price_figure, selected)
-                st.markdown("</div>", unsafe_allow_html=True)
-            with right:
-                st.markdown('<div class="panel"><div class="smallcaps">Market read</div>', unsafe_allow_html=True)
-                above20 = stats["last"] > stats["sma20"] if np.isfinite(stats["sma20"]) else None
-                above50 = stats["last"] > stats["sma50"] if np.isfinite(stats["sma50"]) else None
-                trend_text = f"Price is {'above' if above20 is True else 'below' if above20 is False else 'unavailable versus'} its 20 day average and {'above' if above50 is True else 'below' if above50 is False else 'unavailable versus'} its 50 day average. The trend read is {stats['state'].lower()}."
-                if np.isfinite(stats["rsi"]) and stats["rsi"] >= 70: rsi_text = "Momentum is elevated (RSI above 70), which can accompany an extended move."
-                elif np.isfinite(stats["rsi"]) and stats["rsi"] <= 30: rsi_text = "Momentum is subdued (RSI below 30); this alone does not signal a reversal."
-                elif np.isfinite(stats["rsi"]): rsi_text = "Momentum is in a middle range based on the 14 day RSI."
-                else: rsi_text = "Momentum is unavailable because there is not enough history for a 14 day RSI."
-                move_low, move_high = ((stats["last"] * (1-stats["move"]), stats["last"] * (1+stats["move"]))
-                                       if np.isfinite(stats["move"]) else (np.nan, np.nan))
-                st.markdown(f"**Trend.** {trend_text}")
-                st.markdown(f"**Momentum.** {rsi_text}")
-                if np.isfinite(stats["move"]):
-                    st.markdown(f"**Volatility range.** A one standard deviation estimate puts the 30 day range around **${move_low:,.2f}–${move_high:,.2f}**. It describes uncertainty, not direction.")
-                else:
-                    st.markdown("**Volatility range.** Unavailable because neither a usable options estimate nor a full realized-volatility window was returned.")
-                if payload["options_expiry"]:
-                    st.caption(f"Options snapshot uses near-the-money implied volatility around {payload['options_expiry']}.")
-                elif np.isfinite(stats["hist_vol"]):
-                    st.caption("Options implied volatility unavailable; expected range uses the trailing 30-session realized volatility estimate.")
-                else:
-                    st.caption(f"Options implied volatility unavailable; only {stats['hist_vol_observations']} of 30 realized-volatility sessions are available.")
-                st.markdown("</div>", unsafe_allow_html=True)
+        with st.expander("Market read · trend, momentum, and volatility context", expanded=False):
+            above20 = stats["last"] > stats["sma20"] if np.isfinite(stats["sma20"]) else None
+            above50 = stats["last"] > stats["sma50"] if np.isfinite(stats["sma50"]) else None
+            trend_text = f"Price is {'above' if above20 is True else 'below' if above20 is False else 'unavailable versus'} its 20 day average and {'above' if above50 is True else 'below' if above50 is False else 'unavailable versus'} its 50 day average. The trend read is {stats['state'].lower()}."
+            if np.isfinite(stats["rsi"]) and stats["rsi"] >= 70: rsi_text = "Momentum is elevated (RSI above 70), which can accompany an extended move."
+            elif np.isfinite(stats["rsi"]) and stats["rsi"] <= 30: rsi_text = "Momentum is subdued (RSI below 30); this alone does not signal a reversal."
+            elif np.isfinite(stats["rsi"]): rsi_text = "Momentum is in a middle range based on the 14 day RSI."
+            else: rsi_text = "Momentum is unavailable because there is not enough history for a 14 day RSI."
+            move_low, move_high = ((stats["last"] * (1-stats["move"]), stats["last"] * (1+stats["move"]))
+                                   if np.isfinite(stats["move"]) else (np.nan, np.nan))
+            st.markdown(f"**Trend.** {trend_text}")
+            st.markdown(f"**Momentum.** {rsi_text}")
+            if np.isfinite(stats["move"]):
+                st.markdown(f"**Volatility range.** A one standard deviation estimate puts the 30 day range around **${move_low:,.2f}–${move_high:,.2f}**. It describes uncertainty, not direction.")
+            else:
+                st.markdown("**Volatility range.** Unavailable because neither a usable options estimate nor a full realized-volatility window was returned.")
+            if payload["options_expiry"]:
+                st.caption(f"Options snapshot uses near-the-money implied volatility around {payload['options_expiry']}.")
+            elif np.isfinite(stats["hist_vol"]):
+                st.caption("Options implied volatility unavailable; expected range uses the trailing 30-session realized volatility estimate.")
+            else:
+                st.caption(f"Options implied volatility unavailable; only {stats['hist_vol_observations']} of 30 realized-volatility sessions are available.")
 
-            st.write("")
     if workspace == "Discovery":
         st.markdown('<div id="discovery-index" class="section-anchor"></div>', unsafe_allow_html=True)
         with st.container(border=True):

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from market_lens.ui.components import (
     render_company_header, render_financial_table, render_headline_card,
-    render_metric_card, render_section_heading,
+    render_metric_card, render_section_heading, render_workspace_heading,
 )
 
 
@@ -84,8 +84,40 @@ class DashboardComponentTests(unittest.TestCase):
         app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
         self.assertIn("@media (max-width: 900px)", app_source)
         self.assertIn("@media (max-width: 640px)", app_source)
+        self.assertIn("@media (max-width: 430px)", app_source)
         self.assertIn(".st-key-market_chart_controls", app_source)
         self.assertIn(".company-header", app_source)
+
+    def test_mobile_css_reduces_crowding_without_hiding_financial_panels(self):
+        app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+        mobile_rules = app_source.split("@media (max-width: 640px)", 1)[1].split("@media (max-width: 430px)", 1)[0]
+        self.assertIn('[data-testid="stMainBlockContainer"] { padding:12px 12px 48px; }', mobile_rules)
+        self.assertIn('st-key-market_chart_shell [data-testid="stVerticalBlockBorderWrapper"] { padding:12px 10px; }', mobile_rules)
+        self.assertIn("grid-template-columns:minmax(0,1fr); gap:8px;", mobile_rules)
+        self.assertIn('div[data-testid="stDataFrame"] { max-width:100%; min-width:0; overflow-x:auto; }', mobile_rules)
+        self.assertIn('[data-testid="stButton"] button { min-height:42px; }', mobile_rules)
+        self.assertIn('[data-testid="stExpander"] summary { min-height:44px; }', mobile_rules)
+        self.assertNotIn("display:none", mobile_rules)
+        self.assertNotIn("visibility:hidden", mobile_rules)
+
+    def test_workspace_heading_is_contextual_and_escapes_content(self):
+        with patch("market_lens.ui.components.st.markdown") as markdown:
+            render_workspace_heading("Company <Research>", "Review facts & estimates.")
+        rendered = markdown.call_args.args[0]
+        self.assertIn('class="workspace-heading"', rendered)
+        self.assertIn("Jujosmi Trade · Research workspace", rendered)
+        self.assertIn("Company &lt;Research&gt;", rendered)
+        self.assertIn("Review facts &amp; estimates.", rendered)
+
+    def test_market_overview_places_full_width_chart_before_snapshot(self):
+        source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig")
+        overview = source.split('    if workspace == "Market Overview":', 1)[1].split('    if workspace == "Discovery":', 1)[0]
+        self.assertIn('key="market_chart_shell"', overview)
+        self.assertIn('key="market_chart_main"', overview)
+        self.assertLess(overview.index('render_section_heading("Price chart"'), overview.index('render_section_heading("Selected ticker snapshot"'))
+        for key in ("market_chart_interval", "market_chart_style", "market_chart_averages", "market_chart_range", "market_chart_open_fullscreen"):
+            self.assertIn(key, overview)
+        self.assertIn('with st.expander("Market read · trend, momentum, and volatility context"', overview)
 
     def test_section_heading_and_financial_table_use_shared_rendering_contract(self):
         with patch("market_lens.ui.components.st.markdown") as markdown:

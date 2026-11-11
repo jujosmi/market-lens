@@ -19,6 +19,15 @@ def render_section_heading(title: str, description: str | None = None, eyebrow: 
     )
 
 
+def render_workspace_heading(title: str, description: str, eyebrow: str = "Jujosmi Trade · Research workspace") -> None:
+    """Render a consistent page heading with a visible workspace context."""
+    st.markdown(
+        f'<header class="workspace-heading"><div class="workspace-eyebrow">{escape(eyebrow)}</div>'
+        f'<h1>{escape(title)}</h1><p>{escape(description)}</p></header>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_company_header(
     *, name: str, symbol: str, exchange: str, sector: str, industry: str,
     price: str, daily_change: str, change_positive: bool | None,
