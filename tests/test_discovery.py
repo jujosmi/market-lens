@@ -8,7 +8,7 @@ import pandas as pd
 import app
 from market_lens.discovery import (
     canonical_key_for_industry_name, canonical_local_industry_rows,
-    fetch_industry_companies,
+    fetch_industry_companies, industry_identity,
 )
 
 
@@ -65,6 +65,32 @@ class DiscoveryIndustryTests(unittest.TestCase):
             "Software - Infrastructure", "Technology",
         ))
         self.assertIn("industry_factory", kwargs)
+
+    def test_transient_company_provider_error_does_not_poison_long_success_cache(self):
+        args = (
+            "software-infrastructure", "Yahoo Finance", "technology",
+            "Software Infrastructure", "Technology",
+        )
+        app.load_industry_companies.clear(*args)
+        valid_companies = pd.DataFrame({"name": ["Microsoft"]}, index=["MSFT"])
+        with patch(
+            "app.fetch_industry_companies",
+            side_effect=[(pd.DataFrame(), "Yahoo Finance request failed; try again later."),
+                         (valid_companies, None)],
+        ) as fetch:
+            first, first_error = app.load_industry_companies(*args)
+            self.assertTrue(first.empty)
+            self.assertIn("try again later", first_error)
+
+            # Simulate expiry of only the five-minute provider-result cache.
+            # The one-hour successful-result cache must not contain the failure.
+            app._fetch_industry_companies_cached.clear(*args)
+            second, second_error = app.load_industry_companies(*args)
+
+        self.assertIsNone(second_error)
+        self.assertEqual(list(second.index), ["MSFT"])
+        self.assertEqual(fetch.call_count, 2)
+        app.load_industry_companies.clear(*args)
 
     def test_documented_punctuation_variant_is_accepted_after_identity_normalization(self):
         # Live yfinance 1.8.0 returned "Software - Infrastructure" for the
@@ -209,6 +235,55 @@ class DiscoveryIndustryTests(unittest.TestCase):
             {"technology":"Technology"},
         )
         self.assertEqual([row["industry_key"] for row in rows], ["software—infrastructure"])
+
+    def test_nullable_provider_values_do_not_raise_or_become_identity_text(self):
+        self.assertEqual(industry_identity(pd.NA), "")
+        self.assertEqual(industry_identity(float("nan")), "")
+        self.assertIsNone(canonical_key_for_industry_name(pd.NA, ("software-infrastructure",)))
+
+    def test_missing_sector_metadata_uses_only_confirmed_company_profile(self):
+        industry = SimpleNamespace(
+            name="Software Infrastructure", sector_key=pd.NA,
+            top_companies=pd.DataFrame(),
+            top_performing_companies=pd.DataFrame(),
+            top_growth_companies=pd.DataFrame(),
+        )
+        sector = SimpleNamespace(top_companies=pd.DataFrame(
+            {"name": ["Microsoft", "Other"]}, index=["MSFT", "OTHER"],
+        ))
+
+        def ticker_factory(symbol):
+            profile = (
+                {"industry": "Software - Infrastructure", "sector": "Technology"}
+                if symbol == "MSFT" else {"industry": "Software - Application", "sector": "Technology"}
+            )
+            return SimpleNamespace(get_info=lambda: profile)
+
+        companies, warning = self.call_fetch(
+            industry, sector, ticker_factory=ticker_factory,
+        )
+
+        self.assertEqual(list(companies.index), ["MSFT"])
+        self.assertIn("did not match its selected identity", warning)
+        self.assertIn("Yahoo profile industry and sector verified", companies.loc["MSFT", "Company list"])
+
+    def test_directory_skips_missing_names_and_noncanonical_numeric_indices(self):
+        app.load_industry_index.clear()
+        industries = pd.DataFrame(
+            {"name": ["Semiconductors", pd.NA, "Misindexed"],
+             "symbol": ["^YH31130020", "^YH31110030", "^YH31120030"]},
+            index=pd.Index(["semiconductors", "software-infrastructure", 2]),
+        )
+        sector = SimpleNamespace(name=pd.NA, industries=industries)
+        with patch("app.SECTOR_KEYS", ("technology",)), \
+             patch("app.SECTOR_INDUSTY_MAPPING", {}), \
+             patch("app.SECTOR_INDUSTY_MAPPING_LC", {}), \
+             patch("app.yf.Sector", return_value=sector):
+            result = app.load_industry_index()
+
+        self.assertEqual(list(result["industry_key"]), ["semiconductors"])
+        self.assertEqual(list(result["industry"]), ["Semiconductors"])
+        self.assertEqual(list(result["sector"]), ["Technology"])
 
 
 if __name__ == "__main__":

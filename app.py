@@ -28,7 +28,9 @@ from market_lens.config import (
     hosted_watchlist_mode, public_watchlist_guard,
 )
 from market_lens.cache_policy import clear_selected_ticker_caches as invalidate_ticker_caches
-from market_lens.discovery import canonical_local_industry_rows, fetch_industry_companies, industry_identity
+from market_lens.discovery import (
+    canonical_local_industry_rows, fetch_industry_companies, industry_identity, provider_text,
+)
 from market_lens.explanations import rating_explanation, trend_explanation
 from market_lens.news import classify_headline as sentiment, classify_news_topic as news_topic
 from market_lens.providers import YahooFinanceProvider
@@ -626,15 +628,29 @@ def load_industry_index() -> pd.DataFrame:
             if not isinstance(industries, pd.DataFrame) or industries.empty:
                 LOGGER.info("Yahoo Finance returned an empty industry directory for sector key %r", sector_key)
                 continue
-            sector_name = sector.name or sector_labels.get(sector_key, sector_key.replace("-", " ").title())
+            sector_name = provider_text(sector.name) or sector_labels.get(
+                sector_key, sector_key.replace("-", " ").title()
+            )
             for idx, row in industries.iterrows():
-                industry_key = row.get("key") or row.get("industryKey") or str(idx)
-                industry_name = row.get("name") or str(industry_key).replace("-", " ").title()
-                if not str(industry_key).strip():
+                industry_key = provider_text(row.get("key")) or provider_text(row.get("industryKey"))
+                # yfinance 1.x currently exposes canonical keys as the index;
+                # reject numeric row positions rather than treating them as keys.
+                if not industry_key:
+                    index_key = provider_text(idx)
+                    if index_key and not index_key.isdecimal():
+                        industry_key = index_key
+                industry_name = provider_text(row.get("name")) or provider_text(row.get("industryName"))
+                if not industry_key or industry_key.isdecimal():
                     LOGGER.warning("Yahoo Finance returned an industry without a canonical key for sector %r", sector_key)
                     continue
-                rows.append({"industry_key":str(industry_key), "industry":str(industry_name),
-                             "sector_key":sector_key, "sector":str(sector_name), "source":"Yahoo Finance"})
+                if not industry_name:
+                    LOGGER.warning(
+                        "Yahoo Finance returned an industry without a display name for sector %r and key %r",
+                        sector_key, industry_key,
+                    )
+                    continue
+                rows.append({"industry_key":industry_key, "industry":industry_name,
+                             "sector_key":sector_key, "sector":sector_name, "source":"Yahoo Finance"})
         except Exception as exc:
             LOGGER.warning("Yahoo Finance sector industries request failed for %r (%s): %s",
                            sector_key, type(exc).__name__, str(exc)[:240])
@@ -657,10 +673,14 @@ def load_industry_index() -> pd.DataFrame:
     return pd.DataFrame(rows).drop_duplicates(subset=["industry_key"]) if rows else pd.DataFrame(columns=["industry_key","industry","sector_key","sector","source"])
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_industry_companies(industry_key: str, industry_source: str, sector_key: str,
-                            industry_name: str, sector_name: str) -> tuple[pd.DataFrame, str | None]:
-    """Use canonical Yahoo lists, then a sector list filtered by Yahoo profile keys."""
+class _TransientIndustryProviderError(RuntimeError):
+    """Marks an unsuccessful provider result so it is not kept in the long cache."""
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_industry_companies_cached(industry_key: str, industry_source: str, sector_key: str,
+                                     industry_name: str, sector_name: str) -> tuple[pd.DataFrame, str | None]:
+    """Short-cache all outcomes so temporary failures do not trigger rerun request storms."""
     canonical_keys = tuple(
         key for industry_keys in SECTOR_INDUSTY_MAPPING_LC.values()
         for key in industry_keys
@@ -670,6 +690,38 @@ def load_industry_companies(industry_key: str, industry_source: str, sector_key:
         industry_factory=yf.Industry, sector_factory=yf.Sector, ticker_factory=yf.Ticker,
         canonical_keys=canonical_keys, valid_sector_keys=SECTOR_KEYS,
     )
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_successful_industry_companies_cached(industry_key: str, industry_source: str, sector_key: str,
+                                               industry_name: str, sector_name: str) -> tuple[pd.DataFrame, str | None]:
+    """Keep successful/valid-empty company results warm for one hour, not provider failures."""
+    companies, error = _fetch_industry_companies_cached(
+        industry_key, industry_source, sector_key, industry_name, sector_name,
+    )
+    if companies.empty and error:
+        raise _TransientIndustryProviderError(error)
+    return companies, error
+
+
+def load_industry_companies(industry_key: str, industry_source: str, sector_key: str,
+                            industry_name: str, sector_name: str) -> tuple[pd.DataFrame, str | None]:
+    """Return validated companies; provider failures retry after a short cooldown."""
+    try:
+        return _load_successful_industry_companies_cached(
+            industry_key, industry_source, sector_key, industry_name, sector_name,
+        )
+    except _TransientIndustryProviderError as exc:
+        return pd.DataFrame(), str(exc)
+
+
+def _clear_industry_company_caches(*args) -> None:
+    _load_successful_industry_companies_cached.clear(*args)
+    _fetch_industry_companies_cached.clear(*args)
+
+
+# Preserve the cache-clear interface used by targeted ticker/Discovery tests.
+load_industry_companies.clear = _clear_industry_company_caches
 
 
 @st.cache_data(ttl=1800, show_spinner=False)

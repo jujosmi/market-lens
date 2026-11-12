@@ -12,9 +12,21 @@ import pandas as pd
 LOGGER = logging.getLogger("market_lens.discovery")
 
 
+def provider_text(value: object) -> str:
+    """Return text for a scalar provider field, treating pandas nulls as absent."""
+    if value is None or not pd.api.types.is_scalar(value):
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    return str(value).strip()
+
+
 def industry_identity(value: object) -> str:
     """Normalize punctuation for display-name comparisons, not for API keys."""
-    return re.sub(r"[\W_]+", " ", str(value or "").casefold(), flags=re.UNICODE).strip()
+    return re.sub(r"[\W_]+", " ", provider_text(value).casefold(), flags=re.UNICODE).strip()
 
 
 def canonical_key_for_industry_name(name: str, valid_keys: Sequence[str]) -> str | None:
@@ -24,7 +36,10 @@ def canonical_key_for_industry_name(name: str, valid_keys: Sequence[str]) -> str
     returns a candidate that exists in the provider-maintained key list.
     Unicode punctuation such as Yahoo's em dash is deliberately preserved.
     """
-    candidate = (str(name).strip().casefold().replace("& ", "").replace("- ", "")
+    normalized_name = provider_text(name)
+    if not normalized_name:
+        return None
+    candidate = (normalized_name.casefold().replace("& ", "").replace("- ", "")
                  .replace(", ", " ").replace(" ", "-"))
     return candidate if candidate in set(valid_keys) else None
 
@@ -113,7 +128,7 @@ def _sector_company_fallback(
             continue
         if not isinstance(profile, Mapping):
             profile = {}
-        provider_key = str(profile.get("industryKey") or "").strip()
+        provider_key = provider_text(profile.get("industryKey"))
         key_match = key_verified and provider_key.casefold() == industry_key.casefold()
         profile_name_match = (
             industry_identity(profile.get("industry")) == industry_identity(industry_name)
@@ -148,7 +163,7 @@ def fetch_industry_companies(
     valid_sector_keys: Sequence[str],
 ) -> tuple[pd.DataFrame, str | None]:
     """Fetch Yahoo industry listings, with a validated sector/profile fallback."""
-    key = str(industry_key or "").strip()
+    key = provider_text(industry_key)
     if not key:
         return pd.DataFrame(), "The selected industry has no provider key. Choose another industry."
     if sector_key not in set(valid_sector_keys):
@@ -172,8 +187,8 @@ def fetch_industry_companies(
 
     if industry is not None:
         try:
-            provider_name = str(industry.name or "").strip()
-            provider_sector = str(industry.sector_key or "").strip()
+            provider_name = provider_text(industry.name)
+            provider_sector = provider_text(industry.sector_key)
             identity_matches = (
                 industry_identity(provider_name) == industry_identity(industry_name)
                 and provider_sector.casefold() == sector_key.casefold()
@@ -219,7 +234,7 @@ def fetch_industry_companies(
         # attributes. A missing domain name distinguishes that from an actual
         # industry response whose company arrays are genuinely empty.
         try:
-            if not industry.name:
+            if not provider_text(industry.name):
                 errors.append("Industry response did not contain Yahoo Finance domain metadata")
                 LOGGER.warning("Yahoo Finance industry response had no domain metadata for key %r", key)
             else:
