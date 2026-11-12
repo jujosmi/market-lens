@@ -46,7 +46,9 @@ BEAR_PHRASES = {
     "shares slide":2.8, "shares sink":3.0, "stock falls":3.0, "stock drops":3.0, "stock tumbles":3.2,
     "profit warning":2.4, "going concern":2.8, "accounting probe":2.0, "cuts dividend":1.8,
     "growth slows":2.0, "slowing growth":2.0, "revenue miss":2.0, "earnings miss":2.0,
-    "lowers price target":2.0, "demand weakens":1.8, "customer churn":1.8, "dilutive offering":2.0,
+    "lowers price target":2.0, "cut it to sell":2.4, "cuts it to sell":2.4,
+    "cut to sell":2.4, "cuts to sell":2.4, "cut it to underperform":2.4,
+    "cut to underperform":2.4, "demand weakens":1.8, "customer churn":1.8, "dilutive offering":2.0,
     "halts production":2.0, "recalls vehicles":1.8, "fda rejects":2.6, "approval denied":2.5,
     "trial fails":2.8, "clinical hold":2.4, "failed trial":2.8, "loses contract":2.2,
 }

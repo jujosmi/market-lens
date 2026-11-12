@@ -25,6 +25,16 @@ class HeadlineClassificationTests(unittest.TestCase):
         self.assertEqual(result["label"], "Neutral")
         self.assertEqual(result["confidence"], "Low")
 
+    def test_conflicting_analyst_actions_are_neutral(self):
+        result = classify_headline(
+            "China Renaissance Upgraded Apple (AAPL) to Buy. DZ Bank Cut It to Sell. Here’s the Split",
+            symbol="AAPL", company_name="Apple Inc.",
+        )
+        self.assertEqual(result["label"], "Neutral")
+        self.assertGreater(result["bull_score"], 0)
+        self.assertGreater(result["bear_score"], 0)
+        self.assertEqual(result["reason"], "bullish and bearish cues conflict")
+
 
 if __name__ == "__main__":
     unittest.main()

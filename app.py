@@ -286,18 +286,29 @@ def preserve_workspace_widget_state() -> None:
     save_workspace_widget_state(st.session_state)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def search_tickers(query: str) -> list[dict]:
-    query = query.strip()
-    if len(query) < 2:
-        return []
+class TickerSearchUnavailable(RuntimeError):
+    """Raised when Yahoo search failed, distinct from a valid empty result."""
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _search_tickers_result(query: str) -> dict[str, object]:
+    """Cache transient search errors briefly so reruns do not hammer Yahoo."""
     try:
         quotes = yf.Search(query, max_results=12, news_count=0, lists_count=0,
-                           include_cb=False, include_nav_links=False, raise_errors=False).quotes
-    except Exception:
-        return []
+                           include_cb=False, include_nav_links=False, raise_errors=True).quotes
+    except Exception as exc:
+        LOGGER.warning("Yahoo Finance ticker search failed for query %r (%s)",
+                       query, type(exc).__name__, exc_info=True)
+        return {"matches":[], "warning":"Ticker suggestions are temporarily unavailable. Try again shortly or enter a ticker symbol directly."}
+    if quotes is not None and not isinstance(quotes, (list, tuple)):
+        LOGGER.warning("Yahoo Finance ticker search returned an unexpected quote collection for query %r: %s",
+                       query, type(quotes).__name__)
+        return {"matches":[], "warning":"Ticker suggestions were returned in an unsupported format. Try again shortly."}
     matches = []
     for quote in quotes or []:
+        if not isinstance(quote, Mapping):
+            LOGGER.warning("Yahoo Finance ticker search returned a malformed quote for query %r", query)
+            continue
         if quote.get("quoteType") not in ("EQUITY", "ETF"):
             continue
         symbol = quote.get("symbol")
@@ -307,18 +318,78 @@ def search_tickers(query: str) -> list[dict]:
         exchange = quote.get("exchDisp") or quote.get("exchange") or ""
         matches.append({"symbol":symbol, "name":name, "exchange":exchange,
                         "label":f"{symbol} · {name} · {exchange}".strip(" ·")})
-    return matches
+    return {"matches":matches, "warning":None}
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_ticker_search_matches(query: str) -> list[dict]:
+    result = _search_tickers_result(query)
+    if result["warning"]:
+        raise TickerSearchUnavailable(str(result["warning"]))
+    return result["matches"]
+
+
+def search_tickers(query: str) -> list[dict]:
+    query = query.strip()
+    if len(query) < 2:
+        return []
+    return _cached_ticker_search_matches(query)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_profile(symbol: str) -> dict:
     try:
         info = yf.Ticker(symbol).get_info()
-    except Exception:
-        info = {}
+    except Exception as exc:
+        LOGGER.warning("Yahoo Finance company profile request failed for %s (%s)",
+                       symbol, type(exc).__name__, exc_info=True)
+        return {"name":symbol, "sector":"Unavailable", "industry":"Unavailable",
+                "status":"error", "warning":"Company profile information could not be retrieved."}
+    if info is None or (isinstance(info, Mapping) and not info):
+        return {"name":symbol, "sector":"Unclassified", "industry":"Unclassified",
+                "status":"missing", "warning":None}
+    if not isinstance(info, Mapping):
+        LOGGER.warning("Yahoo Finance company profile response had an unexpected type for %s: %s",
+                       symbol, type(info).__name__)
+        return {"name":symbol, "sector":"Unavailable", "industry":"Unavailable",
+                "status":"malformed", "warning":"Company profile information was returned in an unsupported format."}
     return {"name":info.get("shortName") or info.get("longName") or symbol,
             "sector":info.get("sector") or "Unclassified",
-            "industry":info.get("industry") or "Unclassified"}
+            "industry":info.get("industry") or "Unclassified",
+            "status":"available", "warning":None}
+
+
+def normalize_news_item(item: object) -> dict[str, str] | None:
+    """Normalize supported yfinance story shapes without trusting nested types."""
+    if not isinstance(item, Mapping):
+        return None
+    content = item.get("content")
+    if not isinstance(content, Mapping):
+        content = item
+    title = content.get("title") or item.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return None
+    provider = content.get("provider")
+    provider = provider if isinstance(provider, Mapping) else {}
+    canonical = content.get("canonicalUrl")
+    canonical = canonical if isinstance(canonical, Mapping) else {}
+    link = canonical.get("url") or item.get("link") or "#"
+    if isinstance(link, Mapping):
+        link = link.get("url", "#")
+    published = content.get("pubDate") or item.get("providerPublishTime")
+    if isinstance(published, (int, float)):
+        try:
+            published = datetime.fromtimestamp(published).strftime("%b %d · %I:%M %p")
+        except (OverflowError, OSError, ValueError):
+            published = "Date unavailable"
+    else:
+        published = str(published)[:16] if published else "Recent"
+    return {
+        "title":title.strip(),
+        "publisher":str(provider.get("displayName") or item.get("publisher") or "News source"),
+        "link":str(link) if isinstance(link, str) and link else "#",
+        "published_at":published,
+    }
 
 
 def add_symbol_to_watchlist(symbol: str) -> None:
@@ -858,7 +929,11 @@ def run_app() -> None:
         st.caption(f"{len(symbols)} of {MAX_WATCHLIST_SIZE} ticker slots used")
         query = st.text_input("Search ticker or company", key="ticker_search_query", placeholder="Type 2+ letters…")
         if len(query.strip()) >= 2:
-            suggestions = search_tickers(query)
+            try:
+                suggestions = search_tickers(query)
+            except TickerSearchUnavailable as exc:
+                suggestions = None
+                st.warning(str(exc))
             if suggestions:
                 st.caption("Choose a result to add it and focus the dashboard on that ticker.")
                 watchlist_full = len(symbols) >= MAX_WATCHLIST_SIZE
@@ -873,7 +948,7 @@ def run_app() -> None:
                     )
                 if watchlist_full:
                     st.caption("Your watchlist is full. Remove a ticker above to make room.")
-            else:
+            elif suggestions is not None:
                 st.caption("No ticker matches found. You can still enter a symbol above.")
         focused = st.session_state.get("focus_ticker")
         if focused not in symbols:
@@ -1459,7 +1534,7 @@ def run_app() -> None:
                     dates = catalyst_data.get("earnings_dates")
                     if isinstance(dates, pd.DataFrame) and not dates.empty:
                         render_financial_table(dates.head(6), hide_index=False, key="research_earnings_calendar")
-                    else:
+                    elif "earnings_dates" not in catalyst_data.get("_errors", {}) and tab_is_active(tab_catalysts):
                         st.caption("No earnings dates were returned.")
                     st.markdown("#### Recent SEC filings")
                     filings = catalyst_data.get("sec_filings")
@@ -1477,7 +1552,7 @@ def run_app() -> None:
                             column_config={"URL":st.column_config.LinkColumn("SEC / filing source")},
                             key="research_sec_filings",
                         )
-                    else:
+                    elif "sec_filings" not in catalyst_data.get("_errors", {}) and tab_is_active(tab_catalysts):
                         st.caption("No filing links returned (funds, non-US issuers, or data coverage may differ).")
                 st.caption("Analyst targets are third-party opinions, not price forecasts. Confirm dates and figures against original company releases and filings.")
 
@@ -1496,43 +1571,46 @@ def run_app() -> None:
                     if not tab_is_active(tab_headlines):
                         st.info("Select Headlines & sentiment to load recent company news.")
                     elif not news:
-                        st.info("No recent headlines were returned for this symbol.")
+                        if news_warning:
+                            st.warning(news_warning)
+                        else:
+                            st.info("Yahoo Finance returned no recent headlines for this symbol.")
                     else:
                         positive = negative = neutral = low_signal = 0
+                        malformed_news = 0
                         parsed = []
                         for item in news:
-                            content = (item.get("content") or item) if isinstance(item, dict) else {}
-                            title = content.get("title") or item.get("title") or "Untitled story"
+                            article = normalize_news_item(item)
+                            if article is None:
+                                malformed_news += 1
+                                continue
+                            title = article["title"]
                             analysis = sentiment(title, symbol=selected, company_name=stats.get("name"))
                             label = analysis["label"]
                             positive += label == "Bullish"; negative += label == "Bearish"; neutral += label == "Neutral"
                             low_signal += analysis["confidence"] == "Low"
-                            provider = content.get("provider", {}) or {}
-                            publisher = provider.get("displayName") or item.get("publisher") or "News source"
-                            canonical = content.get("canonicalUrl", {}) or {}
-                            link = canonical.get("url") or item.get("link") or "#"
-                            if isinstance(link, dict): link = link.get("url", "#")
-                            ts = content.get("pubDate") or item.get("providerPublishTime")
-                            if isinstance(ts, (int, float)):
-                                published_at = datetime.fromtimestamp(ts).strftime("%b %d · %I:%M %p")
-                            else:
-                                published_at = str(ts)[:16] if ts else "Recent"
-                            parsed.append((title, label, analysis["confidence"], analysis["reason"], publisher, published_at, link, news_topic(title)))
-                        a, b, c, d = st.columns(4)
-                        a.metric("Bullish headlines", positive)
-                        b.metric("Bearish headlines", negative)
-                        c.metric("Neutral headlines", neutral, help="Weak, mixed, broad-market, or unrelated headlines are not forced into a bullish or bearish label.")
-                        d.metric("Low signal", low_signal, help="Low means the title provides limited directional evidence; it does not indicate bearishness.")
-                        sentiment_filter = st.selectbox("Show headlines", ["All", "Bullish", "Bearish", "Neutral"], key="headline_sentiment_filter")
-                        visible_headlines = [entry for entry in parsed if sentiment_filter == "All" or entry[1] == sentiment_filter]
-                        if not visible_headlines:
-                            st.info(f"No {sentiment_filter.lower()} headlines were returned for this ticker.")
-                        for title, label, confidence, reason, publisher, published_at, link, topic in visible_headlines:
-                            render_headline_card(
-                                title=title, sentiment=label, confidence=confidence, topic=topic,
-                                publisher=publisher, published_at=published_at, reason=reason,
-                                source_url=link,
-                            )
+                            parsed.append((title, label, analysis["confidence"], analysis["reason"], article["publisher"], article["published_at"], article["link"], news_topic(title)))
+                        if malformed_news:
+                            LOGGER.warning("Skipped %d malformed Yahoo Finance headlines for %s", malformed_news, selected)
+                            st.caption(f"{malformed_news} headline item(s) were skipped because the provider response was incomplete.")
+                        if not parsed:
+                            st.info("No readable headlines were returned by Yahoo Finance.")
+                        else:
+                            a, b, c, d = st.columns(4)
+                            a.metric("Bullish headlines", positive)
+                            b.metric("Bearish headlines", negative)
+                            c.metric("Neutral headlines", neutral, help="Weak, mixed, broad-market, or unrelated headlines are not forced into a bullish or bearish label.")
+                            d.metric("Low signal", low_signal, help="Low means the title provides limited directional evidence; it does not indicate bearishness.")
+                            sentiment_filter = st.selectbox("Show headlines", ["All", "Bullish", "Bearish", "Neutral"], key="headline_sentiment_filter")
+                            visible_headlines = [entry for entry in parsed if sentiment_filter == "All" or entry[1] == sentiment_filter]
+                            if not visible_headlines:
+                                st.info(f"No {sentiment_filter.lower()} headlines were returned for this ticker.")
+                            for title, label, confidence, reason, publisher, published_at, link, topic in visible_headlines:
+                                render_headline_card(
+                                    title=title, sentiment=label, confidence=confidence, topic=topic,
+                                    publisher=publisher, published_at=published_at, reason=reason,
+                                    source_url=link,
+                                )
 
                     st.write("")
 
@@ -1543,6 +1621,7 @@ def run_app() -> None:
             st.markdown("## Watchlist snapshot")
             rows = []
             for symbol in symbols:
+                snapshot_result = None
                 try:
                     snapshot_result = history_meta if symbol == selected else load_snapshot(symbol)
                     snapshot = snapshot_result.data
@@ -1551,11 +1630,20 @@ def run_app() -> None:
                     s = stats if symbol == selected else analyze(
                         snapshot, {}, None, context.get("SPY"), load_analyst_recommendations(symbol)
                     )
-                    profile = {"name":stats["name"],"sector":info.get("sector") or "Unclassified","industry":info.get("industry") or "Unclassified"} if symbol == selected else load_profile(symbol)
-                    rows.append({"Ticker":symbol,"Company":profile["name"],"Sector":profile["sector"],"Industry":profile["industry"],"Last":s["last"],"Day":s["change"]/100,"30d range":s["move"],"Trend":s["state"],"Rating":s["rating"],"As of":snapshot_result.last_observation or "unavailable","Data status":snapshot_result.status,"Data warning":snapshot_result.warning or ""})
-                except Exception:
-                    profile = load_profile(symbol)
-                    rows.append({"Ticker":symbol,"Company":profile["name"],"Sector":profile["sector"],"Industry":profile["industry"],"Last":np.nan,"Day":np.nan,"30d range":np.nan,"Trend":"Unavailable","Rating":"Unavailable","As of":"unavailable","Data status":"failed or missing","Data warning":"Price history or calculation was unavailable"})
+                    profile = {"name":stats["name"],"sector":info.get("sector") or "Unclassified","industry":info.get("industry") or "Unclassified","status":payload.get("profile_status", "available"),"warning":next((warning for warning in payload.get("optional_warnings", []) if "profile" in warning.lower()), None)} if symbol == selected else load_profile(symbol)
+                    rows.append({"Ticker":symbol,"Company":profile["name"],"Sector":profile["sector"],"Industry":profile["industry"],"Last":s["last"],"Day":s["change"]/100,"30d range":s["move"],"Trend":s["state"],"Rating":s["rating"],"As of":snapshot_result.last_observation or "unavailable","Data status":snapshot_result.status,"Data warning":snapshot_result.warning or profile.get("warning") or ""})
+                except Exception as exc:
+                    LOGGER.warning("Watchlist row could not be prepared for %s (%s)",
+                                   symbol, type(exc).__name__, exc_info=True)
+                    try:
+                        profile = load_profile(symbol)
+                    except Exception:
+                        profile = {"name":symbol, "sector":"Unavailable", "industry":"Unavailable",
+                                   "warning":"Company profile information could not be retrieved."}
+                    row_warning = (getattr(snapshot_result, "warning", None) if snapshot_result is not None else None)
+                    row_warning = row_warning or profile.get("warning") or "Price history or technical analysis could not be prepared."
+                    row_status = getattr(snapshot_result, "status", None) if snapshot_result is not None else None
+                    rows.append({"Ticker":symbol,"Company":profile["name"],"Sector":profile["sector"],"Industry":profile["industry"],"Last":np.nan,"Day":np.nan,"30d range":np.nan,"Trend":"Unavailable","Rating":"Unavailable","As of":"unavailable","Data status":row_status or profile.get("status", "failed or missing"),"Data warning":row_warning})
             if rows:
                 frame = pd.DataFrame(rows)
                 industries = sorted(i for i in frame["Industry"].dropna().unique() if i != "Unclassified")

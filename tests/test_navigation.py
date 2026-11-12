@@ -192,6 +192,9 @@ class NavigationStateTests(unittest.TestCase):
                 "sec_filings":[], "upgrades":pd.DataFrame(), "_errors":{}, "_missing":[],
             }))
             news_loader = stack.enter_context(patch.object(app, "load_ticker_news", return_value=([], None)))
+            stack.enter_context(patch.object(app, "search_tickers", side_effect=app.TickerSearchUnavailable(
+                "Ticker suggestions are temporarily unavailable. Try again shortly or enter a ticker symbol directly."
+            )))
             stack.enter_context(patch.object(app, "load_snapshot", return_value=envelope))
             stack.enter_context(patch.object(app, "load_profile", return_value={
                 "name":"Example Corporation", "sector":"Technology", "industry":"Software Infrastructure",
@@ -209,6 +212,13 @@ class NavigationStateTests(unittest.TestCase):
             self.assertTrue(any("Jujosmi Trade technical rating" in item.value for item in at.markdown))
             self.assertTrue(any("Non-directional volatility range" in item.value for item in at.markdown))
             self.assertEqual(core_loader.call_count, 1)
+
+            at.session_state["ticker_search_query"] = "ZZZ"
+            at.run(timeout=120)
+            self.assertTrue(any("Ticker suggestions are temporarily unavailable" in item.value for item in at.warning))
+            self.assertFalse(any("No ticker matches found" in item.value for item in at.caption))
+            at.session_state["ticker_search_query"] = ""
+            at.run(timeout=120)
 
             # The overview controls are snapshotted before their hidden widgets are pruned.
             at.get_by_key("market_chart_interval").set_value("1 hour")
@@ -256,10 +266,26 @@ class NavigationStateTests(unittest.TestCase):
             self.assertEqual(catalysts_loader.call_count, 1)
             self.assertTrue(any("Analyst &amp; company events" in item.value or "Analyst & company events" in item.value for item in at.markdown))
             self.assertTrue(any("Current analyst consensus" in item.label for item in at.metric))
+            catalysts_loader.return_value = {
+                "earnings_dates":None, "analyst_targets":None, "eps_revisions":None,
+                "sec_filings":None, "upgrades":None,
+                "_errors":{
+                    "earnings_dates":"Earnings dates could not be retrieved from Yahoo Finance.",
+                    "sec_filings":"SEC filings could not be retrieved from Yahoo Finance.",
+                }, "_missing":[],
+            }
+            at.run(timeout=120)
+            self.assertTrue(any("Earnings dates could not be retrieved" in item.value for item in at.warning))
+            self.assertFalse(any("No earnings dates were returned" in item.value for item in at.caption))
+            self.assertFalse(any("No filing links returned" in item.value for item in at.caption))
             at.session_state["research_desk_tabs"] = "Headlines & sentiment"
             at.run(timeout=120)
             self.assertEqual(news_loader.call_count, 1)
             self.assertTrue(any("Headlines & sentiment" in item.value for item in at.markdown))
+            news_loader.return_value = ([None, {"content":"unsupported"}], None)
+            at.run(timeout=120)
+            self.assertTrue(any("No readable headlines were returned" in item.value for item in at.info))
+            self.assertFalse(any("Bullish headlines" in item.label for item in at.metric))
 
             at.get_by_key(WORKSPACE_KEY).set_value("Watchlist")
             at.run(timeout=120)
@@ -270,7 +296,7 @@ class NavigationStateTests(unittest.TestCase):
             at.get_by_key(WORKSPACE_KEY).set_value("Company Research")
             at.run(timeout=120)
             self.assertEqual(at.session_state["research_desk_tabs"], "Headlines & sentiment")
-            self.assertEqual(news_loader.call_count, 2)
+            self.assertEqual(news_loader.call_count, 3)
 
             at.get_by_key(WORKSPACE_KEY).set_value("Discovery")
             at.run(timeout=120)
