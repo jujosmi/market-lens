@@ -1,93 +1,102 @@
-# Jujosmi Trade
+# Jujosmi Trade UI 2.0
 
-Jujosmi Trade is a local stock watchlist and research dashboard. It helps you observe market conditions, compare stocks and sectors, review company information and read recent headlines. It is a standalone viewer: it has no brokerage connection and cannot place trades.
+An isolated React + TypeScript frontend and FastAPI demonstration backend for four research workspaces: Market Overview, Discovery, Company Research, and Watchlist. The backend uses a pinned snapshot of selected Python research functions and deterministic synthetic fixtures. The optional SEC adapter reads official SEC filings only when configured with an identifying User-Agent. Optional Supabase Auth and account watchlists are implemented in the frontend but require a separately configured project and an applied database migration.
 
-## Light and dark appearance
+This is a local development export. It is not a production-ready financial data service, does not execute trades, and does not provide licensed live market quotes. Do not deploy it or redistribute provider information until the relevant use rights and security controls are approved.
 
-Jujosmi Trade includes a coordinated light palette and dark palette for the dashboard, sidebar, cards, chart, and floating terminology chat. Use Streamlit's app menu (⋮) and choose **Light**, **Dark**, or **System**. The default is dark.
+## Repository layout
 
-The Streamlit toolbar stays available so its appearance menu works. The main app entry point is `app.py`; `streamlit_app.py` is a compatibility wrapper for hosts that use Streamlit's default filename.
+- `frontend/` — React 19, TypeScript, Vite UI, tests, TradingView chart embed, SEC research presentation, optional Supabase Auth/watchlist client, and SQL migration.
+- `backend/` — FastAPI contracts, synthetic provider, SEC EDGAR adapter, and pinned `engine_snapshot/` with integrity manifest.
+- `scripts/` — loopback-only PowerShell start/stop scripts adapted for this folder layout.
+- `docs/` — P4A security and SEC status reports, prior integration reports, and source-hash inventory.
 
-## Run locally
+No `.git` metadata, `.env.local`, secrets, virtual environments, node modules, distribution output, Python caches, or runtime logs are included.
 
-```powershell
-py -m venv .venv
-.venv\Scripts\Activate.ps1
-py -m pip install -r requirements.txt
-py -m streamlit run app.py
-```
+## Requirements
 
-Enter up to eight ticker symbols in the sidebar. The watchlist is saved to `.market_lens_watchlist.json` in this project folder and stays local to this computer.
+- Node.js 20.19+ and npm.
+- Python 3.14.10 (the tested runtime) and PowerShell on Windows.
 
-## Main views
+## Install dependencies
 
-- **Market pulse:** SPY, QQQ, IWM and DIA returns, VIX, a 10-year Treasury yield proxy, S&P 500 moving-average alignment and sector ETF breadth.
-- **Sector rotation:** eleven sector ETF performance rankings and excess returns against SPY over one and three months.
-- **Stock research:** adjusted daily prices, full-window moving averages, RSI, MACD, volatility, beta, drawdown, relative returns versus SPY, fundamentals, estimates, events, filing links and news.
-- **Discovery:** searchable industry categories, company listings, ticker search suggestions, earnings and IPO calendars, splits and economic events.
-- **Watchlist:** persistent symbols, industry filtering and an explainable rule-based Buy / Hold / Sell screen.
-- **Hover help and terminology assistant:** snapshot cards explain their readings on hover. A draggable corner helper answers common terms offline and supports open-ended AI explanations when configured.
-
-## Enable AI chat
-
-The built-in glossary works without an API key. To enable open-ended AI explanations locally, copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, replace the placeholder with your own OpenAI API key, and restart Streamlit:
+From this directory in PowerShell:
 
 ```powershell
-Copy-Item .streamlit\secrets.toml.example .streamlit\secrets.toml
+python -3.14 -m venv backend/.venv
+& .\backend\.venv\Scripts\python.exe -m pip install -r backend/requirements-lock-py314.txt
+npm --prefix frontend ci
 ```
 
-For a hosted app, add `OPENAI_API_KEY = "your-api-key"` in the Streamlit host's Secrets settings. Keep the real key out of GitHub and Cloudflare website files; `.gitignore` excludes the local secrets file. The key remains server-side. When AI is enabled, the user's question and recent chat are sent to OpenAI; the watchlist and market data are not attached automatically. API usage may incur charges. Answers are for terminology education, not security recommendations or live market research. The model can be changed with `MARKET_LENS_AI_MODEL` in an environment variable or Streamlit secret.
+If the `py` launcher does not register Python 3.14, create the venv using the full path to the installed Python 3.14 interpreter. No dependencies are installed globally.
 
-## How the calculations work
-
-The calculations live in `market_lens/analytics.py` and operate on trading observations:
-
-- A 20-, 50- or 200-day simple moving average uses exactly that many valid closes. It is unavailable before then.
-- RSI is Wilder's 14-period calculation, seeded with the first 14 daily changes and recursively smoothed. No losses maps to 100; no gains maps to 0; a flat series maps to 50.
-- An `n`-session price return uses `n + 1` closes. Relative returns first align the stock and SPY closes by shared calendar dates.
-- Beta uses matched daily returns only, needs at least 60 paired observations, uses at most the latest 120, and exposes the sample count in the calculation output.
-- Realized volatility is the sample standard deviation of 30 daily returns, annualized by `sqrt(252)`. It is unavailable without all 30 returns.
-- 52-week range and maximum drawdown require 252 closes. Missing windows stay unavailable instead of being presented as full-year values.
-- The rating uses five equally weighted constructive and five caution checks. It only emits Buy, Hold or Sell when every required input exists; otherwise it shows Unavailable. It is not a validated prediction or personalized recommendation.
-
-## News sentiment
-
-`market_lens/news.py` contains inspectable finance-specific phrases, weighted terms, a short negation scope and a three-way Bullish / Bearish / Neutral output. Directional labels require enough weighted evidence and company-related context; weak wording, mixed signals, or broad-market headlines without a clear link to the selected company are Neutral. Signal strength is a heuristic, not a calibrated probability. Phrase matches are not double-counted as separate word matches.
-
-Financial language benefits from domain-specific treatment: the [Loughran–McDonald dictionary](https://sraf.nd.edu/loughranmcdonald-master-dictionary/) was developed for financial text, and [FinBERT research](https://arxiv.org/abs/1908.10063) finds finance-trained contextual models outperform earlier approaches on financial sentiment tasks. This app uses a transparent local ruleset, not a trained or calibrated model. It can miss context, sarcasm, source quality and company-specific meaning. Headline tone does not predict stock returns. Read the linked story and verify material claims against company releases or filings.
-
-## Data reliability and limitations
-
-Market history is retrieved through `market_lens/providers.py`, which wraps the current Yahoo Finance / yfinance source in a small provider interface. The main stock history displays source, retrieval time, interval, last observation, freshness status and any warning. Broad-market and sector tables include each result's observation date and status. Yahoo quote delay is not verifiable through this provider, so the app says so rather than claiming real-time data. Status values distinguish recent, stale, partial, missing and failed responses.
-
-`market_lens/charts.py` holds chart construction; `market_lens/config.py` holds shared settings; `market_lens/storage.py` stores the local watchlist; and `market_lens/news.py` handles headline scoring. The Streamlit UI remains in `app.py`. The watchlist is a single-user local JSON file, not synced or encrypted.
-
-For a public deployment, set both `MARKET_LENS_PUBLIC = "true"` and `MARKET_LENS_HOSTED = "true"` in the host environment or Streamlit secrets. The app stops with an error if a deployment declares itself public without enabling session-isolated watchlists; this prevents the local shared JSON watchlist from being used by mistake. `MARKET_LENS_HOSTED` keeps each watchlist in its visitor's session instead of using a server-wide file. Hosted session watchlists reset when the browser session ends; this setting is not an authentication system. The repository does not contain production secrets, so the deployed values must be confirmed in the hosting dashboard.
-
-The selected ticker's **Refresh data** button invalidates only that ticker's cached profile, history, recommendations, and chart intervals. **Refresh pulse** clears the shared market-context cache separately. Both use Streamlit's documented per-function cache clearing behavior; the industry directory and calendar are not cleared by a ticker refresh.
-
-## Runtime and dependencies
-
-The supported interpreter is Python 3.14, recorded in `.python-version` and constrained in `pyproject.toml`. `requirements.txt` mirrors the project dependency ranges for Streamlit hosting. Keep those dependency declarations aligned when updating packages.
-
-## Put it on a Cloudflare website
-
-Cloudflare Pages serves the public site at trade.jujosmi.com; its embedded Streamlit experience is guest-only and uses session-isolated watchlists. Authenticated users will enter the Streamlit app at its top-level URL rather than signing in inside the iframe. This repository contains local embed files, not the live Cloudflare or hosting settings. Preserve the current Streamlit origin and coordinate any future URL change with the hosting owner. Read website_embed/README.md for the local template and compatibility notes.
-
-The VIX is an options-implied measure of expected S&P 500 volatility over about 30 days; it does not indicate direction. See [Cboe's VIX FAQ](https://www.cboe.com/tradable_products/vix/faqs). Expected move is a volatility range, not a directional target or probability. The options fallback uses a small sample of near-the-money implied volatility quotes; it is not a constant-maturity volatility surface. Sector ETF returns are proxies and sector breadth is not the same as the share of all listed stocks above a trend threshold.
-
-Company, analyst, news, industry and event coverage comes mainly from Yahoo Finance via the community-maintained [`yfinance`](https://ranaroussi.github.io/yfinance/) package. It may be delayed, incomplete, rate limited or unavailable, and Yahoo may change access. IPO and earnings dates can change; an earnings release date is not necessarily an earnings-call time. SEC filing links are third-party links when returned; [SEC EDGAR](https://www.sec.gov/search-filings/edgar-application-programming-interfaces) is the primary record for U.S. filings. Confirm important details with original sources.
-
-Discovery takes industry keys from Yahoo's live `Sector.industries` response when available. Locally listed categories are only candidates: their keys must appear in yfinance's shipped key list and are checked against Yahoo's returned industry name and sector before use. If the industry listings fail, the app can fall back to Yahoo sector top companies, but includes a symbol only when Yahoo's profile confirms the selected industry key or exact industry and sector labels. Failed provider requests are logged; unverified or missing classifications are not filled in.
-
-## Tests
-
-The offline unit tests use synthetic or fixed data and do not need live market access:
+## Start and stop locally
 
 ```powershell
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\scripts\start-local.ps1
 ```
 
-To smoke-check the compatibility entry point in a browser, run `py -m streamlit run streamlit_app.py`, change the selected ticker, edit the watchlist, press **Refresh data** and **Refresh pulse**, and switch between Light, Dark, and System in the app menu. Confirm each interaction reruns the dashboard and keeps the updated state. `app.py` remains the canonical deployment entry point.
+Open `http://127.0.0.1:5173/`. The API is bound to loopback at `http://127.0.0.1:8000`; its OpenAPI page is `/docs`. The start script refuses ports already in use and records its own process IDs, executable paths, and start times under the system temporary directory. Stop only those matching processes with:
 
-This dashboard is informational and is not financial advice.
+```powershell
+.\scripts\stop-local.ps1
+```
+
+Logs remain under `%TEMP%\jujosmi-trade-ui2-full-app`. Do not expose the demo API to a network. To run services separately, see `docs/LOCAL_DEVELOPMENT.md`.
+
+## Data and provider boundaries
+
+- **TradingView:** Market Overview uses the official embedded chart, with TradingView controls and attribution. Its chart data stays inside the embed; Jujosmi does not extract it or use it in proprietary calculations. The React demo has no chart-data API.
+- **Synthetic mode:** fixture and FastAPI demonstration responses are labeled synthetic and are not actual financial information.
+- **SEC EDGAR:** the backend's server-side route returns supported reported facts and filing links with source fields. It is not a real-time quote source. Standard concepts may be absent, and the adapter must not invent missing values.
+- **Other analyst/news/market-data research:** unavailable for public use until a suitable source and redistribution rights are established.
+- The Python engine snapshot's SHA-256 values are recorded in `backend/engine_snapshot/snapshot-manifest.json`. The engine parity tests use the included snapshot by default and optionally compare it to an external source repository when `JUJOSMI_TRADE_SOURCE_ROOT` is explicitly set to that repository root.
+
+## Optional SEC configuration
+
+Set `SEC_EDGAR_USER_AGENT` only in the backend process environment, using the application name/version and a real owner-configured contact address. Do not commit that value, paste it into chat, or log it. Example format only:
+
+```powershell
+$env:SEC_EDGAR_USER_AGENT = "Jujosmi Trade/2.0 <real monitored contact>"
+.\scripts\start-local.ps1
+```
+
+Do not use the placeholder literally. Without this value, SEC requests stay unavailable. Respect the adapter's request pacing and stop on SEC access-policy responses. No SEC request is needed for synthetic demo mode.
+
+## Optional Supabase development configuration
+
+Guest research does not require an account. Guests have a temporary browser-session watchlist. To test account sync, use only an explicitly approved disposable development project:
+
+1. Copy `frontend/.env.example` to `frontend/.env.local` and enter the development project's URL and **publishable** key.
+2. Never place a service-role, secret, or database-admin credential in a browser `VITE_` variable.
+3. Add the exact localhost origin used by the app (for example `http://127.0.0.1:5173`) to that project's Auth redirect allowlist.
+4. Review `frontend/supabase/migrations/202611150001_watchlist_items.sql` and apply it manually to the intended development database only.
+5. Complete the two-user and anonymous RLS checks in `docs/p4a/SPRINT_P4A_RLS_SECURITY_TESTS.md` before enabling account sync.
+
+The migration is not automatically applied. It grants authenticated SELECT/INSERT/DELETE and omits UPDATE because the client does not edit saved rows; RLS policies bind each granted operation to `auth.uid()`. Live Supabase RLS and email-link session behavior have not been verified in this export. Guest symbols are never uploaded until the user explicitly selects **Import guest watchlist**.
+
+## Tests and checks
+
+```powershell
+Push-Location frontend
+npm test
+npm run build
+npm audit --audit-level=low
+Pop-Location
+
+& .\backend\.venv\Scripts\python.exe -m pytest -q backend/tests
+& .\backend\.venv\Scripts\python.exe -m pip check
+```
+
+The engine snapshot comparison is standalone by default. For comparison with the original repository, set `JUJOSMI_TRADE_SOURCE_ROOT` before running Python tests. This variable is optional and is not required to run the application.
+
+## Limitations and release blockers
+
+- Hosted Supabase Auth, email delivery, session refresh, and real PostgreSQL RLS are not verified; the SQL is a prepared migration only.
+- The SEC identifying contact has not been configured in this development environment, so the live SEC acceptance remains pending. Never claim live AAPL/NVDA facts or populated SEC screenshots without an authorized bounded verification.
+- TradingView commercial-use authorization for the intended public product remains outstanding. Embedding the widget is not an authorization to redistribute its data.
+- No Yahoo Finance or Alpaca integration, no trading/order execution, no persistent watchlist API in FastAPI, and no production hosting setup are included.
+- Public product launch is blocked until data-use rights, live SEC behavior, account/RLS security, and hosting are reviewed independently.
+
+See `docs/EXPORT_INVENTORY.md` and `docs/EXPORT_HASH_MANIFEST.csv` for what was exported and its hash comparison. `docs/EXPORT_VERIFICATION.md` records the test/build/startup results and remaining limits.
+Review `docs/THIRD_PARTY_NOTICES.md` before distributing the product or activating it publicly.
