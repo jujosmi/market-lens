@@ -7,7 +7,7 @@
 - `scripts/` — loopback-only PowerShell start/stop scripts.
 - `docs/` — P4A reports, historical P2A/P2B reports, source hash comparison, verification, and third-party notes.
 
-Included file count: 95
+Included file count: 97
 
 No Git metadata, secrets, local environments, node modules, build output, Python caches, or runtime logs are included.
 
@@ -40,6 +40,7 @@ No Git metadata, secrets, local environments, node modules, build output, Python
 - `backend/requirements-lock-py314.txt`
 - `backend/requirements.txt`
 - `backend/tests/test_api.py`
+- `backend/tests/test_cors_config.py`
 - `backend/tests/test_engine_parity.py`
 - `backend/tests/test_licensing_and_sec_mapping.py`
 - `backend/tests/test_providers.py`
@@ -47,6 +48,7 @@ No Git metadata, secrets, local environments, node modules, build output, Python
 - `docs/EXPORT_HASH_MANIFEST.csv`
 - `docs/EXPORT_INVENTORY.md`
 - `docs/EXPORT_VERIFICATION.md`
+- `docs/RENDER_CORS_STARTUP_FIX_REPORT.md`
 - `docs/history/SPRINT_P2A_AND_ACETERNITY_IMPLEMENTATION_REPORT.md`
 - `docs/history/SPRINT_P2B_ENGINE_INTEGRATION/SPRINT_P2B_ENGINE_INTEGRATION_REPORT.md`
 - `docs/LOCAL_DEVELOPMENT.md`

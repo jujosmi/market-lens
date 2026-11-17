@@ -23,3 +23,11 @@ Verification was run against the assembled `FULL_APP_EXPORT_P4A1` copy before it
 - SEC access was not attempted: the local backend had no `SEC_EDGAR_USER_AGENT`. Live company facts and the populated SEC responsive UI remain unverified.
 - This check is a local build/startup test, not browser visual acceptance or a production deployment test.
 - TradingView commercial-use authorization remains outstanding. The widget's existing attribution and isolation are preserved; see `THIRD_PARTY_NOTICES.md`.
+
+## Render CORS startup correction (2026-11-16)
+
+- The backend now separates explicit localhost development origins from exact HTTPS origins configured for Render staging and validates the Render API host with `RENDER_EXTERNAL_HOSTNAME`.
+- Python 3.14.10 backend suite: **75 passed**; in-memory compilation: **26 Python files**; application/SEC imports passed; `pip check` reported no broken requirements.
+- A simulated Render-mode Uvicorn process started on loopback. `/health` returned HTTP 200, the exact configured frontend origin passed preflight, and an unapproved origin received HTTP 400 without CORS authorization.
+- CORS remains non-credentialed and limited to GET/OPTIONS and Accept/Content-Type. OpenAPI data endpoints remain read-only; no account mutation or trading routes were enabled.
+- The export package was refreshed with the backend correction, regression tests, and `docs/RENDER_CORS_STARTUP_FIX_REPORT.md`. This was not a Render deployment. See the fix report for the required Render environment configuration and test warning.

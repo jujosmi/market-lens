@@ -4,9 +4,10 @@ import logging
 import os
 import re
 import threading
+import ipaddress
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -42,16 +43,108 @@ _sec_request_slots = threading.BoundedSemaphore(4)
 _sec_init_lock = threading.Lock()
 
 
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+DEFAULT_LOCAL_ORIGINS = (
+    "http://127.0.0.1:5173,http://localhost:5173,"
+    "http://127.0.0.1:5174,http://localhost:5174"
+)
+DNS_HOST_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+
+
+def _render_mode() -> bool:
+    return os.getenv("RENDER", "").strip().lower() == "true"
+
+
+def _valid_dns_hostname(hostname: str) -> bool:
+    return hostname == hostname.lower() and DNS_HOST_PATTERN.fullmatch(hostname) is not None
+
+
+def _validated_origin(origin: str) -> tuple[str, str]:
+    """Validate and return (scheme, host) for a canonical browser origin."""
+    if (
+        not origin
+        or origin != origin.strip()
+        or any(character.isspace() for character in origin)
+        or origin == "*"
+        or "\\" in origin
+        or "?" in origin
+        or "#" in origin
+    ):
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS must contain canonical origin URLs.")
+    try:
+        parsed = urlsplit(origin)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS contains a malformed origin URL.") from exc
+
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS must contain origin URLs without credentials or paths.")
+
+    try:
+        ipaddress.ip_address(hostname)
+        is_ip_address = True
+    except ValueError:
+        is_ip_address = False
+
+    if is_ip_address:
+        canonical_host = f"[{hostname}]" if ":" in hostname else hostname
+    else:
+        if not _valid_dns_hostname(hostname) and hostname != "localhost":
+            raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS contains an invalid hostname.")
+        canonical_host = hostname
+
+    if (parsed.scheme == "http" and port == 80) or (parsed.scheme == "https" and port == 443):
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS must omit default ports from canonical origins.")
+    expected = f"{parsed.scheme}://{canonical_host}" + (f":{port}" if port is not None else "")
+    if origin != expected:
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS must contain canonical origin URLs.")
+
+    if parsed.scheme == "http":
+        if _render_mode() or hostname not in LOCAL_HOSTS:
+            raise RuntimeError("HTTP CORS origins are restricted to explicit localhost development origins.")
+    else:
+        if not _render_mode():
+            raise RuntimeError("HTTPS CORS origins are accepted only in hosted Render mode.")
+        if hostname in LOCAL_HOSTS or is_ip_address or not _valid_dns_hostname(hostname):
+            raise RuntimeError("Hosted HTTPS CORS origins must use an explicit public DNS hostname.")
+    return parsed.scheme, hostname
+
+
 def allowed_origins() -> list[str]:
-    configured = os.getenv("TRADE_UI_ALLOWED_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174")
-    origins = [item.strip() for item in configured.split(",") if item.strip()]
-    if not origins:
-        raise RuntimeError("At least one local frontend origin must be configured.")
+    configured = os.getenv("TRADE_UI_ALLOWED_ORIGINS")
+    if _render_mode() and configured is None:
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS must explicitly list the hosted frontend origin on Render.")
+    if configured is None:
+        configured = DEFAULT_LOCAL_ORIGINS
+    if not configured.strip():
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS must contain at least one explicit origin.")
+    origins = [item.strip() for item in configured.split(",")]
+    if any(not item for item in origins):
+        raise RuntimeError("TRADE_UI_ALLOWED_ORIGINS must not contain empty entries.")
     for origin in origins:
-        parsed = urlparse(origin)
-        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.path or parsed.query or parsed.fragment:
-            raise RuntimeError("Development CORS origins must be explicit http localhost origins.")
+        _validated_origin(origin)
     return origins
+
+
+def allowed_hosts() -> list[str]:
+    if not _render_mode():
+        return ["127.0.0.1", "localhost", "testserver", "testclient", "[::1]"]
+    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+    if not _valid_dns_hostname(hostname):
+        raise RuntimeError("Render must provide a valid RENDER_EXTERNAL_HOSTNAME for trusted-host validation.")
+    return [hostname]
 
 
 @asynccontextmanager
@@ -63,7 +156,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Jujosmi Trade UI 2.0 Demo API", version="0.1.0", docs_url="/docs", redoc_url=None, lifespan=lifespan)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver", "testclient", "[::1]"])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins(),
