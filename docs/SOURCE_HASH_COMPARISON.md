@@ -1,9 +1,12 @@
 # Source Hash Comparison
 
-The CSV manifest records SHA-256 for each included export file with a corresponding source and marks each as `MATCH`, `ADAPTED`, or `NEW`. Generated manifests are excluded from their own hash list.
+SHA-256 values compare packaged application files with the current authoritative React and FastAPI source trees. Existing export-only documentation/configuration retain their prior source classification. The manifest excludes itself.
 
-- Exact source matches: 84
-- Adapted source files: 4
+- Exact matches: 91
+- Adapted files: 3
 - New export files: 8
+- Manifest entries: 102
+- New P4C React files in this refresh: 6
+- Backend source files compared: 31; all match the export.
 
-The backend parity test is self-contained by default: it verifies the pinned engine snapshot against the included SHA-256 manifest. `JUJOSMI_TRADE_SOURCE_ROOT` is optional and only enables comparison with an external source checkout. Normal builds and tests do not depend on the original Streamlit repository.
+The packaged React implementation matches current authoritative source for each mapped application file. The export manifest and inventory are refreshed with this package.

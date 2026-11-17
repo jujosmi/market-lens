@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Database, Expand, LineChart, MoreHorizontal, RotateCw } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, Database, Expand, LineChart, RotateCw } from "lucide-react";
 import { buildSeries, type ChartInterval, type ChartStyle } from "../data/fixtures";
 
 export type ChartPreviewState = "ready" | "loading" | "unavailable" | "error";
@@ -33,7 +33,6 @@ export function PriceChart({ symbol, values, referencePrice, interval, style, da
             {(["Area", "Line"] as const).map((choice) => <button key={choice} className={style === choice ? "selected" : ""} onClick={() => onStyleChange(choice)} aria-pressed={style === choice}>{choice === "Area" ? <LineChart size={14} /> : <span className="line-icon" />}<span>{choice}</span></button>)}
           </div>
           <button className="icon-button chart-expand" aria-label="Expand chart" onClick={onExpand}><Expand size={16} /></button>
-          <button className="icon-button chart-menu" aria-label="Chart options"><MoreHorizontal size={18} /></button>
         </div>
       </div>
       <div className="chart-legend"><span className="legend-symbol">{symbol}</span><span>{useRawValues ? "Python close history" : "Sample price path"}</span><span className="legend-value">{series.at(-1)?.toFixed(2) ?? "—"}</span><span className={positive ? "tone-up" : "tone-down"}>{positive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{series.length > 1 ? `${positive ? "+" : ""}${(((series.at(-1)! - series[0]!) / series[0]!) * 100).toFixed(2)}%` : ""}</span></div>

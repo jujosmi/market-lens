@@ -31,3 +31,15 @@ Verification was run against the assembled `FULL_APP_EXPORT_P4A1` copy before it
 - A simulated Render-mode Uvicorn process started on loopback. `/health` returned HTTP 200, the exact configured frontend origin passed preflight, and an unapproved origin received HTTP 400 without CORS authorization.
 - CORS remains non-credentialed and limited to GET/OPTIONS and Accept/Content-Type. OpenAPI data endpoints remain read-only; no account mutation or trading routes were enabled.
 - The export package was refreshed with the backend correction, regression tests, and `docs/RENDER_CORS_STARTUP_FIX_REPORT.md`. This was not a Render deployment. See the fix report for the required Render environment configuration and test warning.
+
+## P4C functional controls verification (2026-11-17)
+
+- React/Vitest: **66 passed across 10 test files**.
+- TypeScript validation and Vite production build: passed. Vite reports the main JavaScript bundle at approximately 508 kB minified, slightly above its 500 kB advisory threshold; the build succeeds.
+- `npm audit --audit-level=low`: **0 vulnerabilities**.
+- FastAPI backend: **75 passed**, with one existing Starlette/httpx TestClient deprecation warning. No backend source files changed.
+- Local browser smoke at `http://127.0.0.1:5190`: confirmed workspace navigation, Public Charts from Company Research, Ctrl/Command+K from Company Research to the public chart search, sector filtering to the matching company, Research navigation for the filtered company, and Preferences/Help opening and closing. The local FastAPI service was not running; the SEC panel showed its expected unavailable state.
+- The browser smoke was desktop-sized. The browser automation surface did not expose viewport overrides, so 390×844 and 768×1024 visual acceptance remain owner checks. No screenshot was saved into this package.
+- The React source was refreshed from its authoritative project. Backend source remains unchanged. The package contains 103 files, including the safe `frontend/.env.example`; no `.env.local`, credentials, node_modules, dist output, Python environments/caches, or Git metadata are included.
+
+These checks are local development verification only, not production deployment or license approval.

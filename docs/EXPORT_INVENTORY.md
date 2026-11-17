@@ -1,15 +1,17 @@
 # FULL_APP Export Inventory
 
+Updated after Sprint P4C functional UI controls and navigation cleanup.
+
 ## Directory summary
 
-- `frontend/` — React application, tests, assets, package lock, Supabase client/types, and SQL migration.
-- `backend/` — FastAPI app, SEC adapter, tests, pinned dependencies, and verified engine snapshot.
-- `scripts/` — loopback-only PowerShell start/stop scripts.
-- `docs/` — P4A reports, historical P2A/P2B reports, source hash comparison, verification, and third-party notes.
+- `frontend/` — complete React application, tests, assets, dependency lock, TradingView embed, Supabase account foundation, and SQL migration.
+- `backend/` — FastAPI app, SEC adapter, provider contracts, tests, and pinned Python research snapshot.
+- `scripts/` — loopback-only start/stop scripts.
+- `docs/` — export integrity, local development, third-party, historical sprint, and P4A documentation.
 
-Included file count: 97
+Included file count: 103
 
-No Git metadata, secrets, local environments, node modules, build output, Python caches, or runtime logs are included.
+No Git metadata, real credentials, `.env.local`, local environments, node modules, distribution output, Python caches, or runtime logs are included.
 
 ## File list
 
@@ -48,7 +50,6 @@ No Git metadata, secrets, local environments, node modules, build output, Python
 - `docs/EXPORT_HASH_MANIFEST.csv`
 - `docs/EXPORT_INVENTORY.md`
 - `docs/EXPORT_VERIFICATION.md`
-- `docs/RENDER_CORS_STARTUP_FIX_REPORT.md`
 - `docs/history/SPRINT_P2A_AND_ACETERNITY_IMPLEMENTATION_REPORT.md`
 - `docs/history/SPRINT_P2B_ENGINE_INTEGRATION/SPRINT_P2B_ENGINE_INTEGRATION_REPORT.md`
 - `docs/LOCAL_DEVELOPMENT.md`
@@ -57,6 +58,7 @@ No Git metadata, secrets, local environments, node modules, build output, Python
 - `docs/p4a/SPRINT_P4A_RLS_SECURITY_TESTS.md`
 - `docs/p4a/SPRINT_P4A_SEC_ACCEPTANCE_STATUS.md`
 - `docs/p4a/SPRINT_P4A_WATCHLIST_SCHEMA.sql`
+- `docs/RENDER_CORS_STARTUP_FIX_REPORT.md`
 - `docs/SOURCE_HASH_COMPARISON.md`
 - `docs/THIRD_PARTY_NOTICES.md`
 - `frontend/.env.example`
@@ -80,7 +82,11 @@ No Git metadata, secrets, local environments, node modules, build output, Python
 - `frontend/src/auth/watchlistRepository.ts`
 - `frontend/src/components/ExpandableResearchCard.test.tsx`
 - `frontend/src/components/ExpandableResearchCard.tsx`
+- `frontend/src/components/HelpGlossaryDialog.test.tsx`
+- `frontend/src/components/HelpGlossaryDialog.tsx`
 - `frontend/src/components/LandingPage.tsx`
+- `frontend/src/components/ModalPanel.tsx`
+- `frontend/src/components/PreferencesDialog.tsx`
 - `frontend/src/components/PriceChart.test.tsx`
 - `frontend/src/components/PriceChart.tsx`
 - `frontend/src/components/Sidebar.tsx`
@@ -98,6 +104,8 @@ No Git metadata, secrets, local environments, node modules, build output, Python
 - `frontend/src/data/workspaceFixtures.ts`
 - `frontend/src/lib/utils.ts`
 - `frontend/src/main.tsx`
+- `frontend/src/preferences.test.ts`
+- `frontend/src/preferences.ts`
 - `frontend/src/styles.css`
 - `frontend/src/test-setup.ts`
 - `frontend/src/types.ts`

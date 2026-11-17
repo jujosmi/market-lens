@@ -13,6 +13,7 @@ function renderDevelopmentApp() {
 afterEach(() => {
   window.history.replaceState({}, "", "/");
   window.sessionStorage.clear();
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -494,5 +495,69 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     await user.click(screen.getByRole("button", { name: "Company Research" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Synthetic research fixture is unavailable.");
     expect(screen.getByRole("button", { name: "Retry local request" })).toBeInTheDocument();
+  });
+
+  it("opens the same preferences panel from sidebar and header and applies browser-local settings", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const preferenceButtons = screen.getAllByRole("button", { name: "Open Preferences" });
+    await user.click(preferenceButtons[0]!);
+    const dialog = screen.getByRole("dialog", { name: "Preferences" });
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Default TradingView symbol" }), "AAPL");
+    await user.click(within(dialog).getByRole("checkbox", { name: "Reduce interface animations" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Collapse sidebar on desktop" }));
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    expect(document.querySelector(".sidebar")).toHaveClass("sidebar-collapsed");
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("jujosmi_trade_ui_preferences_v1") ?? "{}")).toMatchObject({ defaultSymbol: "AAPL", reduceAnimations: true, sidebarCollapsed: true }));
+    await waitFor(() => expect(JSON.parse(document.querySelector("script[src*='embed-widget-advanced-chart.js']")?.textContent ?? "{}").symbol).toBe("NASDAQ:AAPL"));
+
+    await user.click(screen.getAllByRole("button", { name: "Open Preferences" })[1]!);
+    expect(screen.getByRole("dialog", { name: "Preferences" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reset preferences" }));
+    expect(within(screen.getByRole("dialog", { name: "Preferences" })).getByRole("combobox", { name: "Default TradingView symbol" })).toHaveValue("NVDA");
+  });
+
+  it("filters the searchable glossary and restores focus after Escape", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const helpButton = screen.getAllByRole("button", { name: "Open Help and glossary" })[0]!;
+    await user.click(helpButton);
+    const dialog = screen.getByRole("dialog", { name: "Help & glossary" });
+    const search = within(dialog).getByRole("textbox", { name: "Search help and glossary" });
+    expect(search).toHaveFocus();
+    await user.type(search, "filing date");
+    expect(within(dialog).getByText("Filing date vs. reporting period")).toBeInTheDocument();
+    expect(within(dialog).queryByText("OHLCV")).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Help & glossary" })).not.toBeInTheDocument());
+    await waitFor(() => expect(helpButton).toHaveFocus());
+  });
+
+  it("routes Public Charts to Market Overview and preserves the chosen exchange-qualified symbol", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Selected chart ticker" }), "JPM");
+    await user.click(within(screen.getByRole("navigation", { name: "Workspaces" })).getByRole("button", { name: "Company Research" }));
+    await user.click(screen.getByRole("button", { name: "Open Public Charts" }));
+    expect(screen.getByRole("heading", { name: "Market Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Data mode" })).toHaveValue("public");
+    expect(screen.getByRole("heading", { name: "NYSE:JPM" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/market-overview");
+    await waitFor(() => expect(JSON.parse(document.querySelector("script[src*='embed-widget-advanced-chart.js']")?.textContent ?? "{}").symbol).toBe("NYSE:JPM"));
+  });
+
+  it("makes Ctrl+K reach ticker search from another workspace", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(within(screen.getByRole("navigation", { name: "Workspaces" })).getByRole("button", { name: "Company Research" }));
+    await user.keyboard("{Control>}k{/Control}");
+    expect(await screen.findByRole("heading", { name: "Market Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Find supported chart ticker" })).toHaveFocus();
+  });
+
+  it("does not expose a notifications control without a notification service", () => {
+    render(<App />);
+    expect(screen.queryByRole("button", { name: /notifications/i })).not.toBeInTheDocument();
   });
 });
