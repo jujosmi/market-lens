@@ -1,19 +1,20 @@
 # FULL_APP Export Inventory
 
-Updated after Sprint P4C functional UI controls and navigation cleanup.
+Updated for Sprint P4D SEC-powered Discovery.
 
 ## Directory summary
 
-- `frontend/` — complete React application, tests, assets, dependency lock, TradingView embed, Supabase account foundation, and SQL migration.
-- `backend/` — FastAPI app, SEC adapter, provider contracts, tests, and pinned Python research snapshot.
-- `scripts/` — loopback-only start/stop scripts.
-- `docs/` — export integrity, local development, third-party, historical sprint, and P4A documentation.
+- `frontend/` — React application, tests, assets, dependency lock, TradingView embed, Supabase foundation, and SQL migration.
+- `backend/` — FastAPI app, official SEC adapter, SEC Discovery directory/filings routes, provider contracts, tests, and research snapshot.
+- `scripts/` — local loopback startup/stop scripts.
+- `docs/` — export integrity and existing project documentation.
 
-Included file count: 103
+Included file count: 
+105
 
-No Git metadata, real credentials, `.env.local`, local environments, node modules, distribution output, Python caches, or runtime logs are included.
+The package excludes Git metadata, real credentials, `.env.local`, virtual environments, node modules, build output, Python caches, and runtime logs. Only safe `.env.example` placeholders are included.
 
-## File list
+## Complete file list
 
 - `.gitignore`
 - `backend/.gitignore`
@@ -30,6 +31,7 @@ No Git metadata, real credentials, `.env.local`, local environments, node module
 - `backend/app/providers/synthetic.py`
 - `backend/app/sec_edgar/__init__.py`
 - `backend/app/sec_edgar/client.py`
+- `backend/app/sec_edgar/discovery.py`
 - `backend/app/sec_edgar/mapping.py`
 - `backend/app/sec_edgar/service.py`
 - `backend/engine_snapshot/__init__.py`
@@ -46,6 +48,7 @@ No Git metadata, real credentials, `.env.local`, local environments, node module
 - `backend/tests/test_engine_parity.py`
 - `backend/tests/test_licensing_and_sec_mapping.py`
 - `backend/tests/test_providers.py`
+- `backend/tests/test_sec_discovery.py`
 - `backend/tests/test_sec_edgar_http.py`
 - `docs/EXPORT_HASH_MANIFEST.csv`
 - `docs/EXPORT_INVENTORY.md`

@@ -57,6 +57,7 @@ function TradeApp() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>(initialRoute.workspace);
   const [showLanding, setShowLanding] = useState(initialRoute.landing);
   const [selectedSymbol, setSelectedSymbol] = useState(preferences.defaultSymbol);
+  const [selectedSecExchange, setSelectedSecExchange] = useState<string | null>(null);
   const [guestWatchlist, setGuestWatchlist] = useState(readGuestWatchlist);
   const [accountWatchlistState, setAccountWatchlistState] = useState<{ ownerId: string | null; rows: WatchlistEntry[]; loading: boolean; error: string }>({ ownerId: null, rows: [], loading: false, error: "" });
   const [watchlistRetry, setWatchlistRetry] = useState(0);
@@ -255,8 +256,9 @@ function TradeApp() {
     return () => window.removeEventListener("popstate", syncRoute);
   }, []);
 
-  function chooseTicker(symbol: string) {
+  function chooseTicker(symbol: string, exchange?: string) {
     setSelectedSymbol(symbol);
+    setSelectedSecExchange(exchange ?? null);
     setSearch("");
     setSearchOpen(false);
     setSaved(watchlist.includes(symbol));
@@ -437,7 +439,7 @@ function TradeApp() {
             </section>
 
             <footer className="page-footnote"><span>JUJOSMI TRADE UI 2.0</span><span>Design prototype · all financial data is illustrative</span><span>Market tools for clearer thinking</span></footer>
-          </> : activeWorkspace === "discovery" ? <DiscoveryWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} /> : activeWorkspace === "research" ? <ResearchWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} /> : <WatchlistWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onAddTicker={addWatchlistTicker} onRemoveTicker={removeWatchlistTicker} onNavigate={moveWorkspace} persistent={Boolean(auth.user)} accountLoading={accountWatchlistLoading} />}
+          </> : activeWorkspace === "discovery" ? <DiscoveryWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedSecExchange={selectedSecExchange} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} /> : activeWorkspace === "research" ? <ResearchWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedSecExchange={selectedSecExchange} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} /> : <WatchlistWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onAddTicker={addWatchlistTicker} onRemoveTicker={removeWatchlistTicker} onNavigate={moveWorkspace} persistent={Boolean(auth.user)} accountLoading={accountWatchlistLoading} />}
         </div>
       </main>
       <AnimatePresence>{expandedChart && <motion.div className="chart-modal" initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="dialog" aria-modal="true" aria-label="Expanded chart" onClick={(event) => { if (event.target === event.currentTarget) setExpandedChart(false); }}><motion.div className="chart-modal-content" initial={reduced ? false : { y: 12, scale: 0.99 }} animate={{ y: 0, scale: 1 }} exit={{ y: 8, scale: 0.99 }}><div className="modal-head"><div><span className="section-kicker">{ticker.symbol} · SYNTHETIC FIXTURE</span><h2>Expanded chart</h2></div><button className="icon-button" onClick={() => setExpandedChart(false)} aria-label="Close expanded chart"><X size={18} /></button></div><PriceChart symbol={ticker.symbol} values={displayedChartValues} referencePrice={Number(ticker.price)} interval={range} style={chartStyle} dataState={dataMode === "fastapi" ? chartState === "loading" ? "loading" : chartState === "error" ? "error" : chartState === "ready" ? "ready" : "unavailable" : previewDataState} onStyleChange={setChartStyle} onExpand={() => setExpandedChart(false)} onRetry={() => dataMode === "fastapi" ? setChartRetry((value) => value + 1) : setPreviewDataState("ready")} useRawValues={dataMode === "fastapi"} /></motion.div></motion.div>}</AnimatePresence>

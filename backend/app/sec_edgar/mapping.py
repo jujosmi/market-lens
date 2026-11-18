@@ -94,7 +94,7 @@ def _date(value: str | None, *, field: str) -> date | None:
         raise SecMappingError(f"Invalid SEC {field} date.") from exc
 
 
-def _filing_url(cik: str, accession_number: str, document: str | None) -> str | None:
+def sec_filing_url(cik: str, accession_number: str, document: str | None) -> str | None:
     if not document or "/" in document or "\\" in document or document in {".", ".."}:
         return None
     accession_path = accession_number.replace("-", "")
@@ -155,7 +155,7 @@ def map_company_facts(
         filing = SecFiling(cik=identity.cik, accession_number=accession, form=form,
                            filing_date=filed, report_period=report_period,
                            primary_document=document,
-                           filing_url=_filing_url(identity.cik, accession, document))
+                           filing_url=sec_filing_url(identity.cik, accession, document))
         filings_by_accession[accession] = filing
 
     facts_block = company_facts.get("facts", {})

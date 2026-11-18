@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import ipaddress
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -17,13 +18,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .contracts import (
     ApiEnvelope, ChartData, DiscoveryCalendarData, DiscoveryData, NewsEventsData, OverviewData,
-    ResearchData, TechnicalAnalysis, TickerSearchData, WatchlistSummary, WatchlistSummaryData,
+    ResearchData, SecDirectoryData, SecFilingsData, TechnicalAnalysis, TickerSearchData, WatchlistSummary, WatchlistSummaryData,
 )
 from .providers import SyntheticOfflineProvider
 from .providers.cache import CachePolicy, ProviderCache
 from .providers.contracts import ProviderResult
 from .sec_edgar.client import SecAccessBlocked, SecClientError, SecConfigurationError, SecEdgarHttpClient, SecEdgarSettings, SecRateLimited
 from .sec_edgar.mapping import SecCompanyReport, SecMappingError
+from .sec_edgar.discovery import SecDiscoveryService
 from .sec_edgar.service import SecCompanyResearchService
 
 LOGGER = logging.getLogger("jujosmi_trade_api")
@@ -39,6 +41,7 @@ provider_cache = ProviderCache(CachePolicy(
 ))
 _sec_service: SecCompanyResearchService | None = None
 _sec_client: SecEdgarHttpClient | None = None
+_sec_discovery_service: SecDiscoveryService | None = None
 _sec_request_slots = threading.BoundedSemaphore(4)
 _sec_init_lock = threading.Lock()
 
@@ -298,8 +301,82 @@ def close_sec_client() -> None:
         _sec_client.close()
 
 
+def _get_sec_client() -> SecEdgarHttpClient:
+    """Initialize the single shared SEC adapter, retaining its cache and limiter."""
+    global _sec_client, _sec_discovery_service
+    if _sec_client is None:
+        with _sec_init_lock:
+            if _sec_client is None:
+                _sec_client = SecEdgarHttpClient(SecEdgarSettings.from_env())
+                _sec_discovery_service = SecDiscoveryService(_sec_client)
+    return _sec_client
+
+
+def _sec_error_http(exc: Exception) -> HTTPException:
+    if isinstance(exc, SecConfigurationError):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, SecRateLimited):
+        return HTTPException(status_code=429, detail=str(exc))
+    if isinstance(exc, SecAccessBlocked):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, SecClientError):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, SecMappingError):
+        if str(exc).startswith(("SEC payload", "SEC Company Facts issuer", "SEC submissions issuer", "SEC company data", "SEC submissions data", "SEC recent filings", "SEC standard taxonomy")):
+            LOGGER.warning("SEC identity or response validation rejected provider data (%s)", type(exc).__name__)
+            return HTTPException(status_code=503, detail="SEC returned inconsistent or unsupported company data.")
+        return HTTPException(status_code=404, detail=str(exc))
+    return HTTPException(status_code=503, detail="SEC data is currently unavailable.")
+
+
+@app.get(f"{API_PREFIX}/discovery/companies", response_model=ApiEnvelope[SecDirectoryData])
+def get_sec_company_directory(
+    q: Annotated[str, Query(max_length=60, pattern=r"^[A-Za-z0-9 .&,'-]*$")] = "",
+    exchange: Annotated[str | None, Query(max_length=40, pattern=r"^[A-Za-z0-9 .&-]*$")] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 25,
+    offset: Annotated[int, Query(ge=0, le=100000)] = 0,
+):
+    """Search the cached official SEC ticker/CIK/exchange association file locally."""
+    global _sec_discovery_service
+    try:
+        client = _get_sec_client()
+        client.begin_report()
+        if _sec_discovery_service is None:
+            _sec_discovery_service = SecDiscoveryService(client)
+        data = _sec_discovery_service.list_companies(query=" ".join(q.split()), exchange=exchange, limit=limit, offset=offset)
+    except (SecConfigurationError, SecRateLimited, SecAccessBlocked, SecClientError, SecMappingError) as exc:
+        raise _sec_error_http(exc) from exc
+    return ApiEnvelope[SecDirectoryData](data=data, status="ok", source="sec-edgar",
+        freshness="cached" if client.report_cached else "live", as_of=datetime.now(timezone.utc).isoformat(),
+        provenance="SEC EDGAR company_tickers_exchange.json", warnings=[])
+
+
+@app.get(f"{API_PREFIX}/discovery/filings/{{symbol}}", response_model=ApiEnvelope[SecFilingsData])
+def get_sec_discovery_filings(
+    symbol: Annotated[str, Path(min_length=1, max_length=10, pattern=SYMBOL_PATTERN)],
+    exchange: Annotated[str | None, Query(max_length=40, pattern=r"^[A-Za-z0-9 .&-]*$")] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+):
+    """Load recent supported filing rows only for a specific, selected SEC issuer."""
+    global _sec_discovery_service
+    try:
+        client = _get_sec_client()
+        client.begin_report()
+        if _sec_discovery_service is None:
+            _sec_discovery_service = SecDiscoveryService(client)
+        data, warnings = _sec_discovery_service.recent_filings(symbol.upper(), exchange=exchange, limit=limit)
+    except (SecConfigurationError, SecRateLimited, SecAccessBlocked, SecClientError, SecMappingError) as exc:
+        raise _sec_error_http(exc) from exc
+    return ApiEnvelope[SecFilingsData](data=data, status="partial" if warnings else "ok", source="sec-edgar",
+        freshness="cached" if client.report_cached else "live", as_of=datetime.now(timezone.utc).isoformat(),
+        provenance="Official SEC EDGAR issuer submissions", warnings=warnings)
+
+
 @app.get(f"{API_PREFIX}/companies/{{symbol}}/sec-research", response_model=ApiEnvelope[SecCompanyReport])
-def get_sec_research(symbol: Annotated[str, Path(min_length=1, max_length=10, pattern=SYMBOL_PATTERN)]):
+def get_sec_research(
+    symbol: Annotated[str, Path(min_length=1, max_length=10, pattern=SYMBOL_PATTERN)],
+    exchange: Annotated[str | None, Query(max_length=40, pattern=r"^[A-Za-z0-9 .&-]*$")] = None,
+):
     """Read official SEC submissions and Company Facts; never used by chart calculations."""
     global _sec_service, _sec_client
     if not _sec_request_slots.acquire(blocking=False):
@@ -307,11 +384,11 @@ def get_sec_research(symbol: Annotated[str, Path(min_length=1, max_length=10, pa
     try:
         try:
             if _sec_service is None:
+                client = _get_sec_client()
                 with _sec_init_lock:
                     if _sec_service is None:
-                        _sec_client = SecEdgarHttpClient(SecEdgarSettings.from_env())
-                        _sec_service = SecCompanyResearchService(_sec_client, live_data_verified=True)
-            report = _sec_service.get_company_report(symbol.upper())
+                        _sec_service = SecCompanyResearchService(client, live_data_verified=True)
+            report = _sec_service.get_company_report(symbol.upper(), exchange=exchange)
         except SecConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except SecRateLimited as exc:

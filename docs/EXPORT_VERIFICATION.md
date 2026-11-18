@@ -43,3 +43,19 @@ Verification was run against the assembled `FULL_APP_EXPORT_P4A1` copy before it
 - The React source was refreshed from its authoritative project. Backend source remains unchanged. The package contains 103 files, including the safe `frontend/.env.example`; no `.env.local`, credentials, node_modules, dist output, Python environments/caches, or Git metadata are included.
 
 These checks are local development verification only, not production deployment or license approval.
+
+## P4D SEC-powered Discovery verification (2026-11-17)
+
+- React/Vitest: **71 passed across 10 test files**. TypeScript validation and Vite production build passed; the main JavaScript chunk is approximately 518 kB minified, above the 500 kB advisory threshold.
+- Production dependency audit (`npm audit --omit=dev --audit-level=low`): **0 vulnerabilities**. Full development dependency audit previously reported 8 high findings in transitive `picomatch` via Vite tooling; npm advisory output offered no fix.
+- Python backend suite: **85 passed**, with one existing Starlette/httpx TestClient deprecation warning. In-memory syntax compilation covered 23 Python files; FastAPI and SEC Discovery imports passed; `pip check` reported no broken requirements.
+- The latest backend failure was a fixture defect: duplicate ticker entries omitted exchange values while asserting exchange-specific identity. The fixture now supplies distinct NYSE and Nasdaq exchanges; the adapter correctly refuses an unqualified ambiguous ticker and resolves only the explicitly matching exchange.
+- SEC adapter tests use official-shape fixtures and mock transports. Live SEC access was not attempted because the process environment does not contain `SEC_EDGAR_USER_AGENT`; no issuer data or live HTTP metrics are claimed.
+- Local browser smoke at `http://127.0.0.1:5177/discovery` confirmed the SEC Discovery workspace renders, labels the SEC directory source, and shows a safe API-unavailable state without synthetic fallback. It did not verify populated SEC data or mobile visual acceptance.
+- The SEC directory provides symbol/name/exchange search and local pagination over the cached official association file. Exchange qualification is retained when opening Company Research to avoid guessing between duplicate symbols. Issuer filings are loaded only on demand.
+- Future earnings/IPO schedules remain explicitly unavailable. SEC SIC is presented as SIC, not GICS; the SEC ticker association file may be incomplete or inaccurate and is not a full tradable-security or industry directory.
+- Export inventory and SHA-256 manifest were regenerated after syncing 6 frontend and 4 backend source files. The authorized FULL_APP destination was rechecked by relative path and SHA-256: 105 files, zero missing, zero extra, and zero mismatched files.
+- No production Render, Supabase, Cloudflare, GitHub, or protected Streamlit settings were changed.
+
+These checks are local development verification only, not production deployment, live SEC verification, or licensing approval.
+

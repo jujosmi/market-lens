@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowDownRight, BarChart3, Bookmark, CalendarDays, ChevronDown, CircleHelp, Clock3, FileText, Filter, Search, ShieldCheck, TrendingUp } from "lucide-react";
 import { SpotlightCard } from "./SpotlightCard";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { ExpandableResearchCard } from "./ExpandableResearchCard";
 import { fixtureRepository, sectors, type DirectoryFixture } from "../data/workspaceFixtures";
-import { ApiRequestError, fetchCompanyResearch, fetchDiscovery, fetchDiscoveryCalendar, fetchNewsEvents, fetchSecResearch, fetchTechnicalAnalysis, fetchWatchlistSummaries, type ApiEnvelope, type DiscoveryCalendarData, type DiscoveryData, type NewsEventsData, type ResearchData, type SecCompanyReport, type TechnicalAnalysisData, type WatchlistSummaryData } from "../data/apiClient";
+import { ApiRequestError, fetchCompanyResearch, fetchDiscovery, fetchDiscoveryCalendar, fetchNewsEvents, fetchSecDirectory, fetchSecFilings, fetchSecResearch, fetchTechnicalAnalysis, fetchWatchlistSummaries, type ApiEnvelope, type DiscoveryCalendarData, type DiscoveryData, type NewsEventsData, type ResearchData, type SecCompanyReport, type SecDirectoryData, type SecFilingsData, type TechnicalAnalysisData, type WatchlistSummaryData } from "../data/apiClient";
 import type { DataMode } from "../types";
 import { tradingViewTickerSymbols } from "../data/tradingViewSymbols";
 
-type CommonProps = { selectedSymbol: string; selectedTicker: (typeof tickerFixtures)[number]; watchlist: string[]; onSelectTicker: (symbol: string) => void; onNavigate: (workspace: "research" | "overview") => void };
+type CommonProps = { selectedSymbol: string; selectedSecExchange?: string | null; selectedTicker: (typeof tickerFixtures)[number]; watchlist: string[]; onSelectTicker: (symbol: string, exchange?: string) => void; onNavigate: (workspace: "research" | "overview") => void };
 const tickerFixtures = fixtureRepository.getTickers();
 const companyResearchFixtures = fixtureRepository.getResearch();
 const tickerFor = (symbol: string) => tickerFixtures.find((item) => item.symbol === symbol) ?? tickerFixtures[0]!;
@@ -112,11 +112,11 @@ function FixtureResearchWorkspace({ selectedTicker, onNavigate }: CommonProps) {
 }
 
 export function ResearchWorkspace(props: CommonProps & { dataMode?: DataMode }) {
-  if (props.dataMode === "public") return <PublicResearchWorkspace symbol={props.selectedSymbol} onNavigate={props.onNavigate} />;
+  if (props.dataMode === "public") return <PublicResearchWorkspace symbol={props.selectedSymbol} exchange={props.selectedSecExchange} onNavigate={props.onNavigate} />;
   return props.dataMode === "fastapi" ? <EngineResearchWorkspace {...props} /> : <FixtureResearchWorkspace {...props} />;
 }
 
-function PublicResearchWorkspace({ symbol, onNavigate }: { symbol: string; onNavigate: (workspace: "research" | "overview") => void }) {
+function PublicResearchWorkspace({ symbol, exchange, onNavigate }: { symbol: string; exchange?: string | null; onNavigate: (workspace: "research" | "overview") => void }) {
   const [tab, setTab] = useState("Overview");
   const [secResponse, setSecResponse] = useState<ApiEnvelope<SecCompanyReport> | null>(null);
   const [secError, setSecError] = useState("");
@@ -127,12 +127,12 @@ function PublicResearchWorkspace({ symbol, onNavigate }: { symbol: string; onNav
     if (tab !== "Overview" && tab !== "Financials") return;
     const controller = new AbortController();
     setSecLoading(true); setSecError(""); setSecResponse(null);
-    fetchSecResearch(symbol, controller.signal).then(setSecResponse).catch((error: unknown) => {
+    fetchSecResearch(symbol, controller.signal, exchange).then(setSecResponse).catch((error: unknown) => {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setSecError(error instanceof ApiRequestError ? error.message : "SEC reported company information is unavailable.");
     }).finally(() => { if (!controller.signal.aborted) setSecLoading(false); });
     return () => controller.abort();
-  }, [symbol, tab]);
+  }, [symbol, exchange, tab]);
   const secReport = secResponse?.data ?? undefined;
   return <div className="functional-workspace">
     <WorkspaceHeading kicker="COMPANY RESEARCH" title="Research with clear sources." description="Public research panels are shown only when their sources and usage terms are established." badge="PUBLIC SOURCE STATUS" />
@@ -174,19 +174,85 @@ function UnavailablePanel({ title, detail }: { title: string; detail: string }) 
 }
 
 export function DiscoveryWorkspace(props: CommonProps & { dataMode?: DataMode }) {
-  if (props.dataMode === "public") return <PublicDiscoveryWorkspace />;
+  if (props.dataMode === "public") return <PublicDiscoveryWorkspace selectedSymbol={props.selectedSymbol} onSelectTicker={props.onSelectTicker} onNavigate={props.onNavigate} />;
   return <FixtureDiscoveryWorkspace {...props} dataMode={props.dataMode ?? "fixtures"} />;
 }
 
-function PublicDiscoveryWorkspace() {
-  const [tab, setTab] = useState("Industry directory");
+function PublicDiscoveryWorkspace({ selectedSymbol, onSelectTicker, onNavigate }: Pick<CommonProps, "selectedSymbol" | "onSelectTicker" | "onNavigate">) {
+  const pageSize = 25;
+  const [tab, setTab] = useState("Company directory");
   const [query, setQuery] = useState("");
+  const [exchange, setExchange] = useState("");
+  const [page, setPage] = useState(0);
+  const [directory, setDirectory] = useState<ApiEnvelope<SecDirectoryData> | null>(null);
+  const [directoryState, setDirectoryState] = useState<"loading" | "ready" | "error">("loading");
+  const [directoryError, setDirectoryError] = useState("");
+  const [directoryRetry, setDirectoryRetry] = useState(0);
+  const [filingSymbol, setFilingSymbol] = useState("");
+  const [filingExchange, setFilingExchange] = useState("");
+  const [submittedFiling, setSubmittedFiling] = useState<{symbol:string;exchange:string;retry:number}|null>(null);
+  const [filings, setFilings] = useState<ApiEnvelope<SecFilingsData> | null>(null);
+  const [filingsState, setFilingsState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [filingsError, setFilingsError] = useState("");
+  useEffect(() => {
+    if (tab !== "Company directory") return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setDirectoryState("loading"); setDirectoryError("");
+      fetchSecDirectory({query:query.trim(),exchange,limit:pageSize,offset:page*pageSize},controller.signal).then((response) => {
+        setDirectory(response); setDirectoryState("ready");
+      }).catch((cause:unknown) => {
+        if (!controller.signal.aborted) { setDirectory(null); setDirectoryError(cause instanceof ApiRequestError ? cause.message : "The SEC company directory could not be loaded."); setDirectoryState("error"); }
+      });
+    }, 180);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [tab, query, exchange, page, directoryRetry]);
+  useEffect(() => {
+    if (!submittedFiling || tab !== "Recent SEC filings") return;
+    const controller = new AbortController();
+    setFilingsState("loading"); setFilingsError(""); setFilings(null);
+    fetchSecFilings(submittedFiling.symbol,submittedFiling.exchange || undefined,controller.signal).then((response) => {
+      setFilings(response); setFilingsState("ready");
+    }).catch((cause:unknown) => {
+      if (!controller.signal.aborted) { setFilingsError(cause instanceof ApiRequestError ? cause.message : "SEC filing history could not be loaded."); setFilingsState("error"); }
+    });
+    return () => controller.abort();
+  }, [tab, submittedFiling]);
+  const exchangeOptions = directory?.data?.available_exchanges ?? [];
+  const items = directory?.data?.companies ?? [];
+  function showCompanyFilings(symbol:string, selectedExchange:string|null) {
+    const nextExchange=selectedExchange ?? "";
+    setFilingSymbol(symbol); setFilingExchange(nextExchange); setSubmittedFiling({symbol,exchange:nextExchange,retry:Date.now()}); setTab("Recent SEC filings");
+  }
+  function loadFilings(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const symbol=filingSymbol.trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(symbol)) { setFilings(null);setFilingsError("Enter a ticker symbol, or select a company from the SEC directory.");setFilingsState("error");return; }
+    setSubmittedFiling({symbol,exchange:filingExchange.trim(),retry:Date.now()});
+  }
   return <div className="functional-workspace">
-    <WorkspaceHeading kicker="DISCOVERY WORKSPACE" title="Explore the market." description="Search and browse company listings when a verified public directory is connected." badge="PUBLIC SOURCE STATUS" />
-    <div className="public-data-note"><ShieldCheck size={16} /><span>Company listings, industry classifications, earnings dates, and IPO calendars are unavailable in public mode. No fixture listings are presented as facts.</span></div>
-    <div className="discovery-toolbar"><label className="directory-search"><Search size={16} /><input aria-label="Search companies or industries" placeholder="Search companies, tickers, industries…" value={query} onChange={(event) => setQuery(event.target.value)} disabled /><kbd>Unavailable</kbd></label><label className="filter-select"><Filter size={14} /><span>Sector</span><select aria-label="Filter sector" disabled><option>No public directory</option></select><ChevronDown size={13} /></label><label className="filter-select"><span>Industry</span><select aria-label="Filter industry" disabled><option>No public directory</option></select><ChevronDown size={13} /></label></div>
-    <WorkspaceTabs label="Discovery views" items={["Industry directory", "Earnings soon", "IPO calendar"]} value={tab} onChange={setTab} />
-    <UnavailablePanel title={tab === "Industry directory" ? "Verified company directory unavailable" : tab === "Earnings soon" ? "Earnings calendar unavailable" : "IPO calendar unavailable"} detail="The earlier directory and event content is synthetic and remains available only in offline development modes. A verified and appropriately licensed source has not been connected yet." />
+    <WorkspaceHeading kicker="DISCOVERY WORKSPACE" title="Explore SEC company records." description="Search public company identity records and inspect actual filing history from official EDGAR data." badge="SEC EDGAR · PUBLIC RECORDS" />
+    <div className="public-data-note"><ShieldCheck size={16} /><span>The SEC ticker directory is an association file, not a complete or authoritative list of currently tradable securities. It does not provide GICS sector or industry classifications. Filing dates are actual submissions, not scheduled earnings events.</span></div>
+    <WorkspaceTabs label="Discovery views" items={["Company directory", "Recent SEC filings", "Earnings soon", "IPO calendar"]} value={tab} onChange={setTab} />
+    {tab === "Company directory" ? <>
+      <div className="discovery-toolbar sec-directory-toolbar"><label className="directory-search"><Search size={16} /><input aria-label="Search SEC companies by name or ticker" placeholder="Search company name or ticker…" maxLength={60} value={query} onChange={(event) => { setQuery(event.target.value);setPage(0); }} /><kbd>SEC records</kbd></label><label className="filter-select"><Filter size={14} /><span>Exchange</span><select aria-label="Filter by exchange" value={exchange} onChange={(event) => {setExchange(event.target.value);setPage(0);}}><option value="">All exchanges</option>{exchangeOptions.map((item)=><option key={item} value={item}>{item}</option>)}</select><ChevronDown size={13} /></label></div>
+      <div className="discovery-summary-row"><div><span className="section-kicker">SEC COMPANY TICKER DIRECTORY</span><h2>{directoryState === "ready" ? `${directory?.data?.total.toLocaleString() ?? 0} matching SEC records` : "Search company identity records"}</h2></div>{directory && <span className="sec-freshness">{directory.freshness === "cached" ? "SEC DIRECTORY · CACHED" : "SEC DIRECTORY · RETRIEVED"}</span>}</div>
+      <p className="sec-discovery-source">Official source: <a href="https://www.sec.gov/files/company_tickers_exchange.json" target="_blank" rel="noreferrer">SEC company_tickers_exchange.json</a>{directory?.as_of ? ` · Retrieved ${new Date(directory.as_of).toLocaleString()}` : ""}</p>
+      {directoryState === "loading" ? <div className="workspace-state" role="status"><span className="loading-ring" /> Requesting the SEC company directory…</div> : directoryState === "error" ? <div className="workspace-state workspace-error" role="alert"><CircleHelp size={18} /><div><b>SEC directory unavailable</b><span>{directoryError}</span></div><button className="quiet-button" onClick={() => setDirectoryRetry((value)=>value+1)}>Retry directory request</button></div> : <>
+        <div className="sec-directory-table" role="table" aria-label="SEC company ticker and exchange records"><div className="sec-directory-row sec-directory-head" role="row"><span>COMPANY · TICKER</span><span>EXCHANGE</span><span>SEC CIK</span><span>RESEARCH</span></div>
+          {items.map((item)=><div className={`sec-directory-row ${selectedSymbol===item.ticker ? "sec-directory-row-selected" : ""}`} role="row" key={`${item.cik}-${item.ticker}-${item.exchange ?? ""}`}><button className="sec-company-select" aria-pressed={selectedSymbol===item.ticker} onClick={()=>onSelectTicker(item.ticker,item.exchange ?? undefined)} aria-label={`Select ${item.name} (${item.ticker})`}><span className="directory-avatar">{item.ticker.slice(0,1)}</span><span><b>{item.name}</b><small>{item.ticker}</small></span></button><span>{item.exchange ?? "Not supplied"}</span><code>{item.cik}</code><div className="sec-company-actions"><button className="row-research" aria-label={`Open Company Research for ${item.name} (${item.ticker})`} onClick={()=>{onSelectTicker(item.ticker,item.exchange ?? undefined);onNavigate("research");}}>Company Research <ArrowDownRight size={13}/></button><button className="quiet-button" onClick={()=>showCompanyFilings(item.ticker,item.exchange)}>Recent filings</button></div></div>)}
+          {!items.length && <div className="table-empty">No SEC directory records matched this search. Try a ticker or a broader company name.</div>}
+        </div>
+        <div className="sec-pagination"><span>Showing {items.length ? directory!.data!.offset+1 : 0}–{directory!.data!.offset+items.length} of {directory!.data!.total.toLocaleString()}</span><div><button className="quiet-button" disabled={page===0} onClick={()=>setPage((value)=>Math.max(0,value-1))}>Previous</button><button className="quiet-button" disabled={directory!.data!.offset+items.length>=directory!.data!.total} onClick={()=>setPage((value)=>value+1)}>Next</button></div></div>
+      </>}
+      {directory?.stale && <p className="table-caption" role="status">Showing a previously successful SEC directory response; the latest request is marked stale.</p>}
+    </> : tab === "Recent SEC filings" ? <>
+      <div className="discovery-summary-row"><div><span className="section-kicker">ISSUER SUBMISSIONS</span><h2>Recent filings by company</h2></div></div>
+      <p className="sec-discovery-source">Select “Recent filings” on a directory result, or enter an exact SEC ticker. The exchange selector on directory results disambiguates duplicate ticker symbols.</p>
+      <form className="sec-filings-search" onSubmit={loadFilings}><label>Company ticker<input aria-label="Company ticker for filing search" value={filingSymbol} onChange={(event)=>setFilingSymbol(event.target.value.toUpperCase())} maxLength={10} placeholder="e.g. AAPL" /></label><label>Exchange (optional)<input aria-label="Exchange for filing search" value={filingExchange} onChange={(event)=>setFilingExchange(event.target.value)} maxLength={40} placeholder="Select from directory if needed" /></label><button className="primary-button" type="submit">Load SEC filings</button></form>
+      {filingsError && filingsState === "error" && <div className="workspace-state workspace-error" role="alert"><CircleHelp size={18}/><div><b>Filing history unavailable</b><span>{filingsError}</span></div>{submittedFiling && <button className="quiet-button" onClick={()=>setSubmittedFiling({...submittedFiling,retry:Date.now()})}>Retry</button>}</div>}
+      {filingsState === "loading" && <div className="workspace-state" role="status"><span className="loading-ring"/> Requesting this issuer’s SEC submissions…</div>}
+      {filings && filings.data && <><div className="sec-issuer-summary"><div><span className="section-kicker">{filings.freshness === "cached" ? "CACHED SEC SUBMISSIONS" : "SEC SUBMISSIONS"}</span><h3>{filings.data.company_name} <small>{filings.data.ticker}</small></h3><p>CIK {filings.data.cik}{filings.data.exchange ? ` · ${filings.data.exchange}` : ""}{filings.data.sic_description ? ` · SIC ${filings.data.sic ?? ""}: ${filings.data.sic_description}` : " · SEC SIC classification unavailable"}</p></div><span className="sec-freshness">{filings.freshness.toUpperCase()}</span></div><p className="sec-discovery-source">Retrieved {filings.as_of ? new Date(filings.as_of).toLocaleString() : "timestamp unavailable"} · <a href={`https://www.sec.gov/edgar/browse/?CIK=${filings.data.cik}&owner=exclude`} target="_blank" rel="noreferrer">SEC issuer filings</a></p>{filings.data.filings.length ? <div className="sec-filings-list">{filings.data.filings.map((filing)=><article className="sec-filing-row" key={filing.accession_number}><div><span className="rating-chip rating-balanced">{filing.form}</span><h3>{filing.company_name}</h3><p>Filed {filing.filing_date}{filing.report_date ? ` · reporting period ${filing.report_date}` : " · report period not supplied"}</p><small>Accession {filing.accession_number}</small></div>{filing.filing_url && <a className="row-research" href={filing.filing_url} target="_blank" rel="noreferrer">Open filing <ArrowDownRight size={13}/></a>}</article>)}</div> : <div className="table-empty">No recent 10-K, 10-Q, 8-K, or S-1 entries were returned for this issuer.</div>}{filings.warnings.map((warning)=><p className="table-caption" role="status" key={warning}>{warning}</p>)}<p className="table-caption">{filings.data.disclosure}</p></>}
+    </> : <UnavailablePanel title={tab === "Earnings soon" ? "Scheduled earnings dates unavailable" : "IPO trading dates unavailable"} detail={tab === "Earnings soon" ? "SEC submissions show filed documents, not future earnings schedules. No approved scheduled-events source is connected." : "An S-1 registration statement is not a confirmed IPO date. SEC filings do not provide a reliable future IPO calendar here."} />}
   </div>;
 }
 

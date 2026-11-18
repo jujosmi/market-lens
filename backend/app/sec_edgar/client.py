@@ -96,15 +96,22 @@ class SecEdgarHttpClient:
     def close(self) -> None:
         self._client.close()
 
-    def resolve_ticker(self, ticker: str) -> SecIdentity | None:
-        symbol = ticker.strip().upper()
-        if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", symbol):
-            raise SecMappingError("Ticker symbol is invalid.")
+    def get_ticker_directory(self) -> list[dict[str, Any]]:
+        """Return the cached, normalized SEC ticker/CIK/exchange directory."""
         rows = self._get_json(TICKER_MAP_URL, ttl=86400, category="ticker-map")
         if not isinstance(rows, list):
             raise SecClientError("SEC issuer identity data was unavailable or malformed.")
+        return rows
+
+    def resolve_ticker(self, ticker: str, exchange: str | None = None) -> SecIdentity | None:
+        symbol = ticker.strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", symbol):
+            raise SecMappingError("Ticker symbol is invalid.")
+        rows = self.get_ticker_directory()
         matches = [row for row in rows if isinstance(row, dict) and str(row.get("ticker", "")).upper() == symbol]
-        # Ambiguous ticker symbols are not guessed; callers need an exchange-qualified identity flow.
+        if exchange:
+            matches = [row for row in matches if str(row.get("exchange", "")).strip().casefold() == exchange.strip().casefold()]
+        # Ambiguous ticker symbols are not guessed; callers can qualify by exchange.
         if len(matches) != 1:
             return None
         row = matches[0]

@@ -63,6 +63,20 @@ export type SecCompanyReport = {
   filings: { cik: string; accession_number: string; form: string; filing_date: string; report_period: string | null; primary_document: string | null; filing_url: string | null }[];
   missing_fields: string[]; source: string; live_data: boolean; status: "ok" | "partial"; as_of: string | null; warnings: string[];
 };
+export type SecDirectoryCompany = { ticker: string; name: string; cik: string; exchange: string | null };
+export type SecDirectoryData = {
+  companies: SecDirectoryCompany[]; total: number; limit: number; offset: number; query: string;
+  exchange: string | null; available_exchanges: string[]; disclosure: string;
+};
+export type SecFilingActivity = {
+  cik: string; ticker: string; company_name: string; exchange: string | null; sic: string | null;
+  sic_description: string | null; form: string; filing_date: string; report_date: string | null;
+  accession_number: string; primary_document: string | null; filing_url: string | null;
+};
+export type SecFilingsData = {
+  ticker: string; company_name: string; cik: string; exchange: string | null; sic: string | null;
+  sic_description: string | null; filings: SecFilingActivity[]; forms: string[]; disclosure: string;
+};
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly status: ApiStatus = "failed", readonly httpStatus?: number) {
@@ -73,6 +87,7 @@ export class ApiRequestError extends Error {
 
 const baseUrl = (import.meta.env.VITE_TRADE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
 const requestTimeoutMs = 5_000;
+const secRequestTimeoutMs = 30_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -110,9 +125,9 @@ function isDiscoveryData(value: unknown): value is DiscoveryData {
     && typeof value.query === "string" && typeof value.disclosure === "string";
 }
 
-async function requestData<T>(path: string, signal: AbortSignal | undefined, validate: (value: unknown) => value is T): Promise<ApiEnvelope<T>> {
+async function requestData<T>(path: string, signal: AbortSignal | undefined, validate: (value: unknown) => value is T, timeoutMs = requestTimeoutMs): Promise<ApiEnvelope<T>> {
   const timeout = new AbortController();
-  const timeoutId = window.setTimeout(() => timeout.abort(), requestTimeoutMs);
+  const timeoutId = window.setTimeout(() => timeout.abort(), timeoutMs);
   const forwardAbort = () => timeout.abort();
   signal?.addEventListener("abort", forwardAbort, { once: true });
   try {
@@ -193,6 +208,27 @@ function isSecCompanyReport(value: unknown): value is SecCompanyReport {
     && (value.status === "ok" || value.status === "partial") && value.live_data === true
     && Array.isArray(value.warnings) && value.warnings.every((warning) => typeof warning === "string");
 }
+function isSecDirectoryData(value: unknown): value is SecDirectoryData {
+  return isRecord(value) && Array.isArray(value.companies)
+    && value.companies.every((company) => isRecord(company) && typeof company.ticker === "string"
+      && typeof company.name === "string" && typeof company.cik === "string"
+      && (company.exchange === null || typeof company.exchange === "string"))
+    && typeof value.total === "number" && Number.isInteger(value.total) && value.total >= 0
+    && typeof value.limit === "number" && Number.isInteger(value.limit) && value.limit >= 1 && value.limit <= 50
+    && typeof value.offset === "number" && Number.isInteger(value.offset) && value.offset >= 0
+    && typeof value.query === "string" && (value.exchange === null || typeof value.exchange === "string")
+    && Array.isArray(value.available_exchanges) && value.available_exchanges.every((item) => typeof item === "string")
+    && typeof value.disclosure === "string";
+}
+function isSecFilingsData(value: unknown): value is SecFilingsData {
+  return isRecord(value) && ["ticker", "company_name", "cik"].every((key) => typeof value[key] === "string")
+    && ["exchange", "sic", "sic_description"].every((key) => value[key] === null || typeof value[key] === "string")
+    && Array.isArray(value.forms) && value.forms.every((form) => typeof form === "string")
+    && Array.isArray(value.filings) && value.filings.every((filing) => isRecord(filing)
+      && ["cik", "ticker", "company_name", "form", "filing_date", "accession_number"].every((key) => typeof filing[key] === "string")
+      && ["exchange", "sic", "sic_description", "report_date", "primary_document", "filing_url"].every((key) => filing[key] === null || typeof filing[key] === "string"))
+    && typeof value.disclosure === "string";
+}
 
 export function fetchOverview(signal?: AbortSignal) {
   return requestData("/overview", signal, isOverviewData);
@@ -213,8 +249,27 @@ export function fetchCompanyResearch(symbol: string, signal?: AbortSignal) {
 export function fetchNewsEvents(symbol: string, signal?: AbortSignal) {
   return requestData(`/companies/${encodeURIComponent(symbol)}/news-events`, signal, isNewsEventsData);
 }
-export function fetchSecResearch(symbol: string, signal?: AbortSignal) {
-  return requestData(`/companies/${encodeURIComponent(symbol)}/sec-research`, signal, isSecCompanyReport);
+export function fetchSecResearch(symbol: string, signal?: AbortSignal, exchange?: string | null) {
+  const params = new URLSearchParams();
+  if (exchange) params.set("exchange", exchange);
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return requestData(`/companies/${encodeURIComponent(symbol)}/sec-research${suffix}`, signal, isSecCompanyReport, secRequestTimeoutMs);
+}
+
+export function fetchSecDirectory(filters: { query?: string; exchange?: string; limit?: number; offset?: number }, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (filters.query) params.set("q", filters.query);
+  if (filters.exchange) params.set("exchange", filters.exchange);
+  params.set("limit", String(filters.limit ?? 25));
+  params.set("offset", String(filters.offset ?? 0));
+  return requestData(`/discovery/companies?${params.toString()}`, signal, isSecDirectoryData, secRequestTimeoutMs);
+}
+
+export function fetchSecFilings(symbol: string, exchange?: string, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (exchange) params.set("exchange", exchange);
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return requestData(`/discovery/filings/${encodeURIComponent(symbol)}${suffix}`, signal, isSecFilingsData, secRequestTimeoutMs);
 }
 
 export function fetchDiscovery(filters: { sector?: string; industry?: string; query?: string }, signal?: AbortSignal) {

@@ -874,6 +874,56 @@ h1, h2, h3, p { margin-top: 0; }
 .public-unavailable-card p { margin: 0; color: #91a197; font-size: 11px; line-height: 1.65; }
 .research-unavailable-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 16px; }
 .sec-research-content { display: grid; gap: 14px; margin-top: 16px; min-width: 0; }
+
+/* Public SEC-backed Discovery surfaces */
+.sec-discovery-source { color: #9eaaa3; font-size: 12px; line-height: 1.6; margin: 8px 0 14px; }
+.sec-discovery-source a { color: #7bcdb3; text-decoration: underline; text-underline-offset: 3px; }
+.sec-directory-toolbar { align-items: end; }
+.sec-directory-table { border: 1px solid rgba(145, 174, 159, .18); border-radius: 12px; overflow: hidden; background: rgba(15, 23, 21, .72); }
+.sec-directory-row { display: grid; grid-template-columns: minmax(230px, 1.6fr) minmax(110px, .65fr) minmax(105px, .55fr) minmax(220px, 1fr); gap: 14px; align-items: center; padding: 11px 14px; border-top: 1px solid rgba(145, 174, 159, .12); color: #d8e1dc; font-size: 12px; min-width: 0; }
+.sec-directory-head { border-top: 0; color: #91a39a; font-size: 10px; letter-spacing: .09em; font-weight: 650; }
+.sec-directory-row code { color: #a4b7ad; font-size: 11px; }
+.sec-directory-row-selected { background: rgba(67, 140, 111, .12); }
+.sec-company-select { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.sec-company-select > span:last-child { display: grid; gap: 3px; min-width: 0; }
+.sec-company-select b { overflow-wrap: anywhere; }
+.sec-company-select small { color: #8d9b94; }
+.sec-company-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sec-company-actions .row-research { display: inline-flex; width: auto; min-height: 32px; align-items: center; gap: 5px; }
+.sec-company-actions .quiet-button { min-height: 32px; }
+.sec-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 2px; color: #9eaaa3; font-size: 12px; }
+.sec-pagination > div { display: flex; gap: 8px; }
+.sec-filings-search { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin: 15px 0; padding: 15px; border: 1px solid rgba(145, 174, 159, .18); border-radius: 12px; background: rgba(15, 23, 21, .72); }
+.sec-filings-search label { display: grid; gap: 6px; color: #aab9b1; font-size: 11px; }
+.sec-filings-search input { width: min(100%, 270px); min-height: 39px; padding: 0 11px; border: 1px solid rgba(145, 174, 159, .25); border-radius: 8px; background: #101816; color: #e4ece7; }
+.sec-filings-search .primary-button { min-height: 39px; }
+.sec-issuer-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; margin: 16px 0 0; padding: 16px; border: 1px solid rgba(145, 174, 159, .18); border-radius: 12px; background: rgba(15, 23, 21, .72); }
+.sec-issuer-summary h3 { margin: 5px 0; color: #e2ebe5; }
+.sec-issuer-summary h3 small { color: #90a69a; font-size: 12px; }
+.sec-issuer-summary p { margin: 0; color: #9eaaa3; font-size: 12px; line-height: 1.5; }
+.sec-filings-list { display: grid; gap: 8px; margin-top: 12px; }
+.sec-filing-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 13px 15px; border: 1px solid rgba(145, 174, 159, .15); border-radius: 10px; background: rgba(15, 23, 21, .62); }
+.sec-filing-row h3 { display: inline; margin: 0 0 0 8px; color: #dce6df; font-size: 13px; }
+.sec-filing-row p { margin: 7px 0 3px; color: #a3b0a9; font-size: 12px; }
+.sec-filing-row small { color: #84958c; }
+.sec-filing-row > a { flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .sec-directory-row { grid-template-columns: minmax(0, 1fr) minmax(90px, .55fr); gap: 8px 12px; padding: 11px; }
+  .sec-directory-head { display: none; }
+  .sec-directory-row > code { justify-self: start; }
+  .sec-company-actions { grid-column: 1 / -1; }
+  .sec-filings-search { align-items: stretch; flex-direction: column; }
+  .sec-filings-search label, .sec-filings-search input { width: 100%; }
+  .sec-filings-search .primary-button { width: 100%; }
+}
+@media (max-width: 480px) {
+  .sec-directory-row { grid-template-columns: minmax(0, 1fr) auto; font-size: 11px; }
+  .sec-company-actions .row-research, .sec-company-actions .quiet-button { flex: 1 1 auto; justify-content: center; }
+  .sec-issuer-summary, .sec-filing-row { align-items: flex-start; flex-direction: column; }
+  .sec-pagination { align-items: flex-start; flex-direction: column; }
+  .sec-pagination > div { width: 100%; }
+  .sec-pagination button { flex: 1; }
+}
 .sec-source-card { background: var(--panel, rgba(16,24,20,.78)); }
 .sec-title-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .sec-title-row h3, .sec-filings h3 { margin:6px 0 0; color:var(--text, #e4ece6); font-size:16px; }

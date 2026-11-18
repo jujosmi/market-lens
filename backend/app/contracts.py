@@ -108,6 +108,51 @@ class DiscoveryData(StrictModel):
     disclosure: str
 
 
+class SecDirectoryCompany(StrictModel):
+    ticker: str
+    name: str
+    cik: str = Field(pattern=r"^\d{10}$")
+    exchange: str | None = None
+
+
+class SecDirectoryData(StrictModel):
+    companies: list[SecDirectoryCompany]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=50)
+    offset: int = Field(ge=0)
+    query: str
+    exchange: str | None = None
+    available_exchanges: list[str]
+    disclosure: str
+
+
+class SecFilingActivity(StrictModel):
+    cik: str = Field(pattern=r"^\d{10}$")
+    ticker: str
+    company_name: str
+    exchange: str | None = None
+    sic: str | None = None
+    sic_description: str | None = None
+    form: str
+    filing_date: str
+    report_date: str | None = None
+    accession_number: str
+    primary_document: str | None = None
+    filing_url: str | None = None
+
+
+class SecFilingsData(StrictModel):
+    ticker: str
+    company_name: str
+    cik: str = Field(pattern=r"^\d{10}$")
+    exchange: str | None = None
+    sic: str | None = None
+    sic_description: str | None = None
+    filings: list[SecFilingActivity]
+    forms: list[str]
+    disclosure: str
+
+
 class CalendarItem(StrictModel):
     symbol: str
     name: str

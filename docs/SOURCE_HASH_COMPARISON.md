@@ -1,12 +1,19 @@
 # Source Hash Comparison
 
-SHA-256 values compare packaged application files with the current authoritative React and FastAPI source trees. Existing export-only documentation/configuration retain their prior source classification. The manifest excludes itself.
+Source-backed frontend and backend application files were compared against the authoritative development trees using SHA-256. Export-only historical documentation and safe deployment configuration retain their original provenance; the manifest records those separately.
 
-- Exact matches: 91
-- Adapted files: 3
-- New export files: 8
-- Manifest entries: 102
-- New P4C React files in this refresh: 6
-- Backend source files compared: 31; all match the export.
+- React source matches: 
+54
+ files
+- Backend source matches: 
+33
+ files
+- Source mismatches: 
+0
+- Export package files: 
+105
+- Manifest entries: 
+104
+; the manifest does not hash itself.
 
-The packaged React implementation matches current authoritative source for each mapped application file. The export manifest and inventory are refreshed with this package.
+`docs/EXPORT_HASH_MANIFEST.csv` records each file path, source or documentation origin, source hash where applicable, exported-file hash, and comparison status.

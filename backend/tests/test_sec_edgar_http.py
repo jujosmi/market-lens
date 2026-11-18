@@ -65,11 +65,12 @@ def test_identity_and_company_data_use_only_official_fixed_endpoints_and_cache()
 def test_ambiguous_or_missing_ticker_is_not_guessed():
     def handler(_):
         return httpx.Response(200, json=ticker_directory([
-            {"cik": 1, "name": "One", "ticker": "ABC"},
-            {"cik": 2, "name": "Two", "ticker": "ABC"},
+            {"cik": 1, "name": "One", "ticker": "ABC", "exchange": "NYSE"},
+            {"cik": 2, "name": "Two", "ticker": "ABC", "exchange": "Nasdaq"},
         ]))
     client = SecEdgarHttpClient(SecEdgarSettings(UA), transport=httpx.MockTransport(handler), limiter=SharedRateLimiter(0))
     assert client.resolve_ticker("ABC") is None
+    assert client.resolve_ticker("ABC", "NYSE").cik == "0000000001"
     client.close()
 
 

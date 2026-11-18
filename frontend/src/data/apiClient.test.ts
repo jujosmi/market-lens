@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, fetchChart, fetchDiscovery, fetchDiscoveryCalendar, fetchOverview, fetchWatchlistSummaries } from "./apiClient";
+import { ApiRequestError, fetchChart, fetchDiscovery, fetchDiscoveryCalendar, fetchOverview, fetchSecDirectory, fetchSecFilings, fetchSecResearch, fetchWatchlistSummaries } from "./apiClient";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
@@ -65,6 +65,38 @@ describe("typed local API client", () => {
     const payload = { data: { kind: "ipos", window_days: 60, items: [], disclosure: "Illustrative calendar only." }, status: "ok", source: "synthetic-fixtures", freshness: "simulated", missing_fields: [], warnings: [] };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })));
     expect((await fetchDiscoveryCalendar("ipos", 60)).data?.kind).toBe("ipos");
+  });
+
+  it("validates SEC directory records and sends bounded search, exchange, and pagination", async () => {
+    const data = { companies: [{ ticker: "AAPL", name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq" }], total: 1, limit: 25, offset: 25, query: "Apple", exchange: "Nasdaq", available_exchanges: ["Nasdaq"], disclosure: "SEC source; not a complete inventory." };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data, status: "ok", source: "sec-edgar", freshness: "cached", warnings: [], missing_fields: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await fetchSecDirectory({ query: "Apple", exchange: "Nasdaq", limit: 25, offset: 25 });
+    expect(response.data?.companies[0]).toMatchObject({ ticker: "AAPL", cik: "0000320193" });
+    const request = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(request.pathname).toContain("/discovery/companies");
+    expect(request.searchParams).toMatchObject({});
+    expect(request.searchParams.get("q")).toBe("Apple");
+    expect(request.searchParams.get("exchange")).toBe("Nasdaq");
+    expect(request.searchParams.get("limit")).toBe("25");
+    expect(request.searchParams.get("offset")).toBe("25");
+  });
+
+  it("validates SEC filing identity, accession, dates, and official document link", async () => {
+    const data = { ticker: "AAPL", company_name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq", sic: "3571", sic_description: "Electronic Computers", forms: ["10-K", "10-Q", "8-K", "S-1"], filings: [{ cik: "0000320193", ticker: "AAPL", company_name: "Apple Inc.", exchange: "Nasdaq", sic: "3571", sic_description: "Electronic Computers", form: "10-Q", filing_date: "2026-10-30", report_date: "2026-09-27", accession_number: "0000320193-26-000001", primary_document: "quarter.htm", filing_url: "https://www.sec.gov/Archives/edgar/data/320193/000032019326000001/quarter.htm" }], disclosure: "Filed records only." };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data, status: "ok", source: "sec-edgar", freshness: "live", warnings: [], missing_fields: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await fetchSecFilings("AAPL", "Nasdaq");
+    expect(response.data?.filings[0]?.accession_number).toBe("0000320193-26-000001");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/discovery/filings/AAPL?exchange=Nasdaq");
+  });
+
+  it("passes an SEC exchange qualifier through to Company Research", async () => {
+    const data = { identity: { cik: "0000100001", ticker: "EXM", name: "Example Holdings", exchange: "NYSE", identity_source: "sec_company_tickers" }, facts: [], filings: [], missing_fields: ["revenue"], source: "SEC EDGAR submissions and Company Facts", live_data: true, status: "partial", as_of: "2026-11-17T12:00:00Z", warnings: [] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data, status: "partial", source: "sec-edgar", freshness: "live", warnings: [], missing_fields: data.missing_fields }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchSecResearch("EXM", undefined, "NYSE");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/companies/EXM/sec-research?exchange=NYSE");
   });
 
   it("preserves Watchlist symbols and validates Python summary fields", async () => {

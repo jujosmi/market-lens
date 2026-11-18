@@ -11,7 +11,7 @@ from .mapping import STANDARD_FACT_TAGS, SecCompanyReport, SecIdentity, SecMappi
 class SecEdgarGateway(Protocol):
     """Minimal interface a separately authorized SEC client must implement."""
 
-    def resolve_ticker(self, ticker: str) -> SecIdentity | None: ...
+    def resolve_ticker(self, ticker: str, exchange: str | None = None) -> SecIdentity | None: ...
     def get_submissions(self, cik: str) -> Mapping[str, Any]: ...
     def get_company_facts(self, cik: str) -> Mapping[str, Any]: ...
 
@@ -23,14 +23,14 @@ class SecCompanyResearchService:
         self._gateway = gateway
         self._live_data_verified = live_data_verified
 
-    def get_company_report(self, ticker: str) -> SecCompanyReport:
+    def get_company_report(self, ticker: str, exchange: str | None = None) -> SecCompanyReport:
         normalized = ticker.strip().upper()
         if not normalized or len(normalized) > 12:
             raise SecMappingError("Ticker must contain 1 to 12 characters.")
         begin_report = getattr(self._gateway, "begin_report", None)
         if begin_report:
             begin_report()
-        identity = self._gateway.resolve_ticker(normalized)
+        identity = self._gateway.resolve_ticker(normalized, exchange) if exchange else self._gateway.resolve_ticker(normalized)
         if identity is None:
             raise SecMappingError("No SEC issuer identity is mapped for this ticker.")
         if identity.identity_source != "sec_company_tickers":

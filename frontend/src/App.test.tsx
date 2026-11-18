@@ -54,12 +54,51 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Discovery" }));
-    expect(screen.getByText(/No fixture listings are presented as facts/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Explore SEC company records." })).toBeInTheDocument();
+    expect(screen.getByText(/not a complete or authoritative list of currently tradable securities/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Company Research" }));
     expect(screen.getByText(/Identity loads from the official SEC directory/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Watchlist" }));
     expect(screen.getByRole("heading", { name: "4 tickers" })).toBeInTheDocument();
     expect(screen.getAllByText("Quote and company research unavailable")).toHaveLength(4);
+  });
+
+  it("loads real-shaped SEC directory rows and navigates the selected issuer to public research", async () => {
+    const directory = { companies: [{ ticker: "AAPL", name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq" }], total: 1, limit: 25, offset: 0, query: "", exchange: null, available_exchanges: ["Nasdaq"], disclosure: "SEC association file; not a complete inventory." };
+    const report = { identity: { cik: "0000320193", ticker: "AAPL", name: "Apple Inc.", exchange: "Nasdaq", identity_source: "sec_company_tickers" }, facts: [], filings: [], missing_fields: ["revenue"], source: "SEC EDGAR submissions and Company Facts", live_data: true, status: "partial", as_of: "2026-11-17T12:00:00Z", warnings: ["No supported facts were available."] };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      const payload = url.includes("/discovery/companies")
+        ? { data: directory, status: "ok", source: "sec-edgar", freshness: "live", warnings: [], missing_fields: [] }
+        : { data: report, status: "partial", source: "sec-edgar", freshness: "cached", warnings: report.warnings, missing_fields: report.missing_fields };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Discovery" }));
+    expect(await screen.findByRole("button", { name: "Open Company Research for Apple Inc. (AAPL)" })).toBeInTheDocument();
+    expect(screen.getByText("0000320193")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open Company Research for Apple Inc. (AAPL)" }));
+    expect(await screen.findByRole("heading", { name: /Apple Inc\./ })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/companies/AAPL/sec-research?exchange=Nasdaq"))).toBe(true);
+  });
+
+  it("loads selected-company filing history with SEC dates and links in public Discovery", async () => {
+    const directory = { companies: [{ ticker: "AAPL", name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq" }], total: 1, limit: 25, offset: 0, query: "", exchange: null, available_exchanges: ["Nasdaq"], disclosure: "SEC association file; not exhaustive." };
+    const filings = { ticker: "AAPL", company_name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq", sic: "3571", sic_description: "Electronic Computers", forms: ["10-K", "10-Q", "8-K", "S-1"], filings: [{ cik: "0000320193", ticker: "AAPL", company_name: "Apple Inc.", exchange: "Nasdaq", sic: "3571", sic_description: "Electronic Computers", form: "10-Q", filing_date: "2026-10-30", report_date: "2026-09-27", accession_number: "0000320193-26-000001", primary_document: "quarter.htm", filing_url: "https://www.sec.gov/Archives/edgar/data/320193/000032019326000001/quarter.htm" }], disclosure: "Filings are not scheduled events." };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url=String(input); const payload=url.includes("/discovery/companies")
+        ? {data:directory,status:"ok",source:"sec-edgar",freshness:"live",warnings:[],missing_fields:[]}
+        : {data:filings,status:"ok",source:"sec-edgar",freshness:"live",warnings:[],missing_fields:[]};
+      return Promise.resolve(new Response(JSON.stringify(payload),{status:200,headers:{"Content-Type":"application/json"}}));
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    const user=userEvent.setup();render(<App />);await user.click(screen.getByRole("button",{name:"Discovery"}));
+    await user.click(await screen.findByRole("button",{name:"Recent filings"}));
+    expect(await screen.findByText("Accession 0000320193-26-000001")).toBeInTheDocument();
+    expect(screen.getByRole("link",{name:/Open filing/})).toHaveAttribute("href",filings.filings[0]?.filing_url);
+    expect(screen.getByText(/Electronic Computers/)).toBeInTheDocument();
   });
 
   it("renders SEC-sourced issuer identity, original fact values, and filing provenance in public research", async () => {
