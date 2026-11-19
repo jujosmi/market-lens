@@ -1,7 +1,31 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
+import { isAccountAuthEnabled } from "../releaseFeatures";
 
 export type SupabaseConfiguration = { url: string; publishableKey: string };
+
+const exactHostedAuthOrigins = new Set([
+  "https://trade.jujosmi.com",
+  "https://jujosmi-trade-v2.onrender.com",
+]);
+
+/** Only the official app, staging app and local Vite development origins may receive an auth callback. */
+export function isAllowedAuthOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.origin !== origin || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) return false;
+    if (exactHostedAuthOrigins.has(parsed.origin)) return true;
+    const localHost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    const localPort = Number(parsed.port);
+    return localHost && parsed.protocol === "http:" && (!parsed.port || (localPort >= 1024 && localPort <= 65535));
+  } catch {
+    return false;
+  }
+}
+
+export function safeAuthCallbackUrl(origin: string): string | null {
+  return isAllowedAuthOrigin(origin) ? `${origin}/` : null;
+}
 
 function readConfiguration(): SupabaseConfiguration | null {
   const env = import.meta.env as ImportMetaEnv & {
@@ -33,8 +57,11 @@ function readConfiguration(): SupabaseConfiguration | null {
   return { url, publishableKey };
 }
 
-export const supabaseConfiguration = readConfiguration();
+export const accountAuthEnabled = isAccountAuthEnabled();
+export const supabaseConfiguration = accountAuthEnabled ? readConfiguration() : null;
 export const supabaseConfigurationAvailable = supabaseConfiguration !== null;
+export const publicSignupEnabled = accountAuthEnabled
+  && (import.meta.env as ImportMetaEnv & { VITE_SUPABASE_PUBLIC_SIGNUP?: string }).VITE_SUPABASE_PUBLIC_SIGNUP === "true";
 
 export async function createSupabaseClient(): Promise<SupabaseClient<Database> | null> {
   if (!supabaseConfiguration) return null;

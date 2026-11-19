@@ -11,8 +11,14 @@ export function TradingViewAdvancedChart({ symbol, theme = "dark" }: Props) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || !qualifiedSymbol) return;
-    host.replaceChildren();
+    let active = true;
+    for (const child of Array.from(host.children)) {
+      if ((child as HTMLElement).dataset.tvSettled === "true") child.remove();
+    }
 
+    const generation = document.createElement("div");
+    generation.className = "tradingview-widget-generation";
+    generation.dataset.tvSettled = "false";
     const widget = document.createElement("div");
     widget.className = "tradingview-widget-container__widget";
     const attribution = document.createElement("div");
@@ -41,8 +47,31 @@ export function TradingViewAdvancedChart({ symbol, theme = "dark" }: Props) {
       calendar: false,
       support_host: "https://www.tradingview.com",
     });
-    host.append(widget, attribution, script);
-    return () => host.replaceChildren();
+    generation.append(widget, attribution, script);
+    host.append(generation);
+
+    const handleLoad = () => {
+      generation.dataset.tvSettled = "true";
+      if (!active) {
+        generation.remove();
+        return;
+      }
+      for (const child of Array.from(host.children)) {
+        if (child !== generation && (child as HTMLElement).dataset.tvSettled === "true") child.remove();
+      }
+    };
+    const handleError = () => generation.remove();
+    script.addEventListener("load", handleLoad);
+    script.addEventListener("error", handleError, { once: true });
+
+    return () => {
+      active = false;
+      script.removeEventListener("error", handleError);
+      // Keep a pending script attached to its container until it settles. The embed reads
+      // currentScript.parentNode during initialization; detaching it early caused a
+      // third-party querySelector error when a symbol changed or the component unmounted.
+      if (generation.dataset.tvSettled === "true") generation.remove();
+    };
   }, [qualifiedSymbol, theme]);
 
   if (!qualifiedSymbol) return <div className="workspace-state" role="status">No exchange-qualified TradingView symbol is configured for {symbol}.</div>;

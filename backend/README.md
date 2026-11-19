@@ -4,11 +4,11 @@ This isolated Python service demonstrates typed frontend/backend contracts using
 
 ## Start locally (PowerShell)
 
-Use Python 3.14 and run the backend in its own terminal. On this Windows development machine, `py -3.14` currently has no registered runtime; the installed interpreter is at `%LOCALAPPDATA%\Programs\Python\Python314\python.exe`. Use the registered launcher on machines where it is configured, or set `$pythonExe` to the actual Python 3.14 executable path:
+Use Python 3.14 and run the backend in its own terminal. If the Python launcher does not resolve version 3.14, replace the $pythonExe example below with the exact installed interpreter path:
 
 ```powershell
-cd "C:\Users\mores\Desktop\jujosmi\misc projects\jujosmi-trade-ui2-backend"
-$pythonExe = Join-Path $env:LOCALAPPDATA "Programs\Python\Python314\python.exe"
+# Run from the backend project directory.
+$pythonExe = "C:\Path\To\Python314\python.exe"
 & $pythonExe -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-lock-py314.txt
@@ -27,7 +27,7 @@ Run tests with `python -m pytest -q`; verify dependencies with `python -m pip ch
 For a repeatable Python 3.14 demo environment, the verified exact dependency set is recorded in `requirements-lock-py314.txt`. After creating and activating the virtual environment, install those exact pins with `python -m pip install -r requirements-lock-py314.txt`. Keep `requirements.txt` as the supported version-range declaration; refresh the lock only as a reviewed dependency change.
 
 For a one-command local startup, run `..\start-jujosmi-trade-demo.ps1` from PowerShell in the parent `misc projects` folder. It starts the API and Vite server bound to loopback, checks both services, and writes logs and process IDs under `%TEMP%\jujosmi-trade-ui2`. Stop only those recorded processes with `..\stop-jujosmi-trade-demo.ps1`. The launcher requires the backend `.venv` and frontend `node_modules` to exist first.
-Parity tests compare the copied snapshot with `~/Documents/GitHub/market-lens/market_lens` by default; set `JUJOSMI_TRADE_SOURCE_ROOT` to the repository root if it is stored elsewhere.
+If you have the original Market Lens checkout, parity tests can compare the copied snapshot against it by setting JUJOSMI_TRADE_SOURCE_ROOT to the repository root. This comparison is optional and is not required for the local service.
 
 ## API inventory
 
@@ -64,7 +64,7 @@ Future adapters must supply provider-specific source/feed/timestamp/licensing me
 
 ## Security boundary
 
-Local development binds to `127.0.0.1`; Trusted Host accepts localhost and test hosts only; CORS accepts explicit HTTP localhost origins and rejects other domains. For the authorized Render staging deployment, set `TRADE_UI_ALLOWED_ORIGINS` to the exact HTTPS frontend origin (for example, `https://jujosmi-trade-v2.onrender.com`). Render's `RENDER=true` and `RENDER_EXTERNAL_HOSTNAME` runtime variables enable the hosted branch and restrict trusted hosts to that service's exact hostname. Do not use wildcard origins. CORS remains non-credentialed, and only `GET`/preflight plus `Accept` and `Content-Type` are allowed. Authentication, database-backed accounts, watchlist mutation, trading, and unlicensed market-data operations are not enabled. This CORS correction does not authorize broader public use of this demonstration API or change its synthetic/SEC source boundaries.
+Local development binds to `127.0.0.1`; Trusted Host accepts localhost and test hosts only; CORS accepts explicit HTTP localhost origins and rejects other domains. The repository contains a Render-style hosted configuration path, but the active hosting provider, service identity, and canonical API hostname have not been verified. If the owner confirms Render, set `TRADE_UI_ALLOWED_ORIGINS` to the exact HTTPS frontend origin and verify Render's `RENDER=true` and `RENDER_EXTERNAL_HOSTNAME` runtime variables before starting the service. Do not reuse the historical example origin without owner confirmation. Do not use wildcard origins. CORS remains non-credentialed, and only `GET`/preflight plus `Accept` and `Content-Type` are allowed. Authentication, database-backed accounts, watchlist mutation, trading, and unlicensed market-data operations are not enabled. This CORS configuration does not authorize broader public use of this demonstration API or change its synthetic/SEC source boundaries.
 
 ## SEC EDGAR source boundary
 
@@ -72,4 +72,11 @@ Local development binds to `127.0.0.1`; Trusted Host accepts localhost and test 
 
 The adapter uses a process-shared 0.5-second request interval, a 7-second request timeout, at most two retries for transient gateway errors, a 15 MiB response cap, bounded success caching (ticker/exchange directory 24 hours; submissions/facts 15 minutes), and no negative caching. Directory text/exchange search and pagination are filtered locally from this cached file; they do not make additional SEC requests. Issuer submissions are fetched only when a visitor asks for that company's filings, then cached. A 403 trips a process-level circuit breaker. Provider failure remains distinguishable from a missing fact and does not fall back to synthetic data. The HTTP API reports SEC provenance and live/cached freshness. The ticker association file can be incomplete or inaccurate and does not establish a complete list of currently tradable securities. It contains no GICS sector or industry fields; the selected-issuer filings view may show SEC SIC as such. Earnings and IPO schedules remain unavailable. Analysts, news, and technical research remain unavailable in public mode; TradingView stays separate and its embedded data is not extracted or used for calculations.
 
-Automated tests use mock HTTP transports and SEC-shaped fixtures; they are not live SEC verification. Official references: [EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces), [fair-access guidance](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data), and [User-Agent FAQ](https://www.sec.gov/about/webmaster-frequently-asked-questions).
+## SEC financial statement views
+
+`/api/v1/companies/{symbol}/sec-research` includes `annual_periods`, `quarterly_periods`, and `ytd_periods` built from the issuer's reported Company Facts. Annual facts remain FY; three-month interim facts remain quarterly; six-/nine-month cumulative income and cash-flow facts remain YTD; instant balance-sheet facts keep their as-of date and appear only in annual/quarterly views. The adapter does not derive Q4 or subtract YTD cash flows to manufacture quarters. When SEC fiscal-period metadata conflicts for the same date, an interim label is resolved from that date's position between consecutive annual closes; otherwise the provider label is retained. Original fact metadata is preserved.
+
+Year-over-year values require the same metric, unit, normalized fiscal period, and duration within seven days, and use `(current - previous) / abs(previous) × 100`. Zero denominators are unavailable. The latest filed accession is selected per concept, unit, and exact period. Same-valued duplicates do not inflate summaries; conflicting duplicate values in the latest accession are retained in raw facts, excluded from summaries, and flagged. Unsupported or absent measures remain unavailable rather than zero.
+
+Live browser acceptance retrieved AAPL Company Facts and submissions on 2026-11-18 and followed the latest 10-K link to its SEC filing page. Automated tests still use mock HTTP transports and SEC-shaped fixtures. This local check does not establish public redistribution rights or production readiness. The export includes no SEC contact value; configure a real monitored `SEC_EDGAR_USER_AGENT` only in the backend process environment. Official references: [EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces), [fair-access guidance](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data), and [User-Agent FAQ](https://www.sec.gov/about/webmaster-frequently-asked-questions).
+

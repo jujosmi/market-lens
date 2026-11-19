@@ -1,23 +1,30 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
 import { Activity, ArrowDown, ArrowDownRight, ArrowUpRight, ChevronDown, CircleHelp, HelpCircle, Search, Settings2, ShieldCheck, SlidersHorizontal, Star, TrendingUp, X } from "lucide-react";
 import { PriceChart, type ChartPreviewState } from "./components/PriceChart";
-import { TradingViewAdvancedChart } from "./components/TradingViewAdvancedChart";
 import { ExpandableResearchCard } from "./components/ExpandableResearchCard";
 import { LandingPage } from "./components/LandingPage";
 import { SpotlightCard } from "./components/SpotlightCard";
 import { Sidebar } from "./components/Sidebar";
-import { DiscoveryWorkspace, ResearchWorkspace, WatchlistWorkspace } from "./components/WorkspaceViews";
 import { chartIntervals, pulseFixtures, tickerFixtures, type ChartInterval, type ChartStyle } from "./data/fixtures";
 import { ApiRequestError, chartResolutions, fetchChart, fetchOverview, fetchTechnicalAnalysis, fetchTickerSearch, fetchWatchlistSummaries, type ApiEnvelope, type ChartData, type ChartResolution, type OverviewData, type TechnicalAnalysisData, type WatchlistSummaryData } from "./data/apiClient";
 import type { DataMode, Workspace } from "./types";
 import { tradingViewSymbols, tradingViewTickerSymbols } from "./data/tradingViewSymbols";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { AuthAccountMenu } from "./auth/AuthAccountMenu";
-import { createWatchlistRepository, type WatchlistEntry } from "./auth/watchlistRepository";
+import { createWatchlistRepository } from "./auth/watchlistRepository";
+import { accountWatchlistForUser, accountWatchlistIsLoading, type AccountWatchlistState } from "./auth/watchlistState";
 import { HelpGlossaryDialog } from "./components/HelpGlossaryDialog";
 import { PreferencesDialog } from "./components/PreferencesDialog";
 import { DEFAULT_PREFERENCES, readPreferences, writePreferences, type AppPreferences } from "./preferences";
+import { isKestrelPreviewEnabled, isTradingViewWidgetEnabled } from "./releaseFeatures";
+
+const KestrelResearchPreview = import.meta.env.DEV ? lazy(() => import("./components/KestrelResearchPreview").then((module) => ({ default: module.KestrelResearchPreview }))) : null;
+const TradingViewAdvancedChart = lazy(() => import("./components/TradingViewAdvancedChart").then((module) => ({ default: module.TradingViewAdvancedChart })));
+const DiscoveryWorkspace = lazy(() => import("./components/WorkspaceViews").then((module) => ({ default: module.DiscoveryWorkspace })));
+const ResearchWorkspace = lazy(() => import("./components/WorkspaceViews").then((module) => ({ default: module.ResearchWorkspace })));
+const WatchlistWorkspace = lazy(() => import("./components/WorkspaceViews").then((module) => ({ default: module.WatchlistWorkspace })));
+const tradingViewWidgetEnabled = isTradingViewWidgetEnabled();
 
 const workspaceLabels: Record<Workspace, string> = { overview: "Market Overview", discovery: "Discovery", research: "Company Research", watchlist: "Watchlist" };
 const workspacePaths: Record<Workspace, string> = { overview: "/market-overview", discovery: "/discovery", research: "/research", watchlist: "/watchlist" };
@@ -59,16 +66,19 @@ function TradeApp() {
   const [selectedSymbol, setSelectedSymbol] = useState(preferences.defaultSymbol);
   const [selectedSecExchange, setSelectedSecExchange] = useState<string | null>(null);
   const [guestWatchlist, setGuestWatchlist] = useState(readGuestWatchlist);
-  const [accountWatchlistState, setAccountWatchlistState] = useState<{ ownerId: string | null; rows: WatchlistEntry[]; loading: boolean; error: string }>({ ownerId: null, rows: [], loading: false, error: "" });
+  const [accountWatchlistState, setAccountWatchlistState] = useState<AccountWatchlistState>({ ownerId: null, rows: [], loading: false, error: "" });
   const [watchlistRetry, setWatchlistRetry] = useState(0);
+  const [confirmGuestImport, setConfirmGuestImport] = useState(false);
+  const [guestImportState, setGuestImportState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const auth = useAuth();
   const activeUserId = useRef<string | null>(auth.user?.id ?? null);
   activeUserId.current = auth.user?.id ?? null;
-  const accountWatchlist = auth.user && accountWatchlistState.ownerId === auth.user.id ? accountWatchlistState.rows : [];
-  const accountWatchlistLoading = Boolean(auth.user && (accountWatchlistState.ownerId !== auth.user.id || accountWatchlistState.loading));
+  const accountWatchlist = accountWatchlistForUser(accountWatchlistState, auth.user?.id ?? null);
+  const accountWatchlistLoading = accountWatchlistIsLoading(accountWatchlistState, auth.user?.id ?? null);
   const watchlistError = auth.user && accountWatchlistState.ownerId === auth.user.id ? accountWatchlistState.error : "";
-  const guestWatchlistToImport = guestWatchlist.filter((symbol) => !accountWatchlist.includes(symbol));
-  const watchlist = auth.loading ? [] : auth.user ? accountWatchlist.map((entry) => entry.symbol) : guestWatchlist;
+  const guestWatchlistToImport = guestWatchlist.filter((symbol) => !accountWatchlist.some((entry) => entry.symbol === symbol && entry.exchange === exchangeFor(symbol)));
+  const watchlist = auth.loading ? [] : auth.user ? [...new Set(accountWatchlist.map((entry) => entry.symbol))] : guestWatchlist;
+  const sidebarWatchlistEntries = auth.user ? accountWatchlist.map(({ symbol, exchange }) => ({ symbol, exchange })) : guestWatchlist.map((symbol) => ({ symbol, exchange: exchangeFor(symbol) }));
   const [range, setRange] = useState<ChartInterval>("1M");
   const [resolution, setResolution] = useState<ChartResolution>("1d");
   const [chartStyle, setChartStyle] = useState<ChartStyle>("Area");
@@ -111,6 +121,8 @@ function TradeApp() {
     if (auth.loading) return () => { active = false; };
     if (!auth.user || !auth.client) {
       setAccountWatchlistState({ ownerId: null, rows: [], loading: false, error: "" });
+      setConfirmGuestImport(false);
+      setGuestImportState("idle");
       return () => { active = false; };
     }
     const ownerId = auth.user.id;
@@ -126,8 +138,8 @@ function TradeApp() {
 
   useEffect(() => {
     if (auth.loading || accountWatchlistLoading) return;
-    setSaved(watchlist.includes(selectedSymbol));
-  }, [auth.loading, accountWatchlistLoading, auth.user?.id, watchlist.join(","), selectedSymbol]);
+    setSaved(isWatchlisted(selectedSymbol, selectedSecExchange ?? exchangeFor(selectedSymbol)));
+  }, [auth.loading, accountWatchlistLoading, auth.user?.id, watchlist.join(","), accountWatchlist.map((row) => `${row.symbol}:${row.exchange}`).join(","), selectedSymbol, selectedSecExchange]);
 
   const ticker = tickerFixtures.find((item) => item.symbol === selectedSymbol) ?? tickerFixtures[0]!;
   const engineLast = analysisEnvelope?.data?.indicators.last ?? null;
@@ -261,19 +273,27 @@ function TradeApp() {
     setSelectedSecExchange(exchange ?? null);
     setSearch("");
     setSearchOpen(false);
-    setSaved(watchlist.includes(symbol));
+    setSaved(isWatchlisted(symbol, exchange));
   }
 
   function toggleWatchlist() {
-    if (watchlist.includes(ticker.symbol)) void removeWatchlistTicker(ticker.symbol);
-    else void addWatchlistTicker(ticker.symbol);
+    const exchange = selectedSecExchange ?? exchangeFor(ticker.symbol);
+    if (isWatchlisted(ticker.symbol, exchange)) void removeWatchlistTicker(ticker.symbol, exchange);
+    else void addWatchlistTicker(ticker.symbol, exchange);
+  }
+
+  function isWatchlisted(symbol: string, exchange?: string) {
+    if (!auth.user) return guestWatchlist.includes(symbol);
+    const normalizedExchange = (exchange ?? exchangeFor(symbol)).toUpperCase();
+    return accountWatchlist.some((entry) => entry.symbol === symbol && entry.exchange.toUpperCase() === normalizedExchange);
   }
 
   function exchangeFor(symbol: string) {
     return tickerFixtures.find((item) => item.symbol === symbol)?.exchange?.toUpperCase().replace(/[^A-Z0-9._-]/g, "") ?? "";
   }
 
-  async function addWatchlistTicker(symbol: string): Promise<boolean> {
+  async function addWatchlistTicker(symbol: string, exchange?: string): Promise<boolean> {
+    const normalizedExchange = exchange ?? exchangeFor(symbol);
     if (!auth.user || !auth.client) {
       setGuestWatchlist((current) => current.includes(symbol) ? current : [...current, symbol]);
       if (symbol === selectedSymbol) setSaved(true);
@@ -282,10 +302,10 @@ function TradeApp() {
     const ownerId = auth.user.id;
     const repository = createWatchlistRepository(auth.client, ownerId);
     try {
-      await repository.add(symbol, exchangeFor(symbol));
+      await repository.add(symbol, normalizedExchange);
       const rows = await repository.list();
       if (activeUserId.current === ownerId) setAccountWatchlistState({ ownerId, rows, loading: false, error: "" });
-      if (activeUserId.current === ownerId && symbol === selectedSymbol) setSaved(true);
+      if (activeUserId.current === ownerId && symbol === selectedSymbol && normalizedExchange.toUpperCase() === (selectedSecExchange ?? exchangeFor(symbol)).toUpperCase()) setSaved(true);
       return true;
     } catch (cause) {
       if (activeUserId.current === ownerId) setAccountWatchlistState((current) => ({ ...current, ownerId, loading: false, error: cause instanceof Error ? cause.message : "Saved watchlist could not be updated." }));
@@ -293,7 +313,8 @@ function TradeApp() {
     }
   }
 
-  async function removeWatchlistTicker(symbol: string): Promise<boolean> {
+  async function removeWatchlistTicker(symbol: string, exchange?: string): Promise<boolean> {
+    const normalizedExchange = exchange ?? exchangeFor(symbol);
     if (!auth.user || !auth.client) {
       setGuestWatchlist((current) => current.filter((item) => item !== symbol));
       if (symbol === selectedSymbol) setSaved(false);
@@ -302,10 +323,10 @@ function TradeApp() {
     const ownerId = auth.user.id;
     const repository = createWatchlistRepository(auth.client, ownerId);
     try {
-      for (const row of accountWatchlist.filter((item) => item.symbol === symbol)) await repository.remove(row.id);
+      for (const row of accountWatchlist.filter((item) => item.symbol === symbol && item.exchange.toUpperCase() === normalizedExchange.toUpperCase())) await repository.remove(row.id);
       const rows = await repository.list();
       if (activeUserId.current === ownerId) setAccountWatchlistState({ ownerId, rows, loading: false, error: "" });
-      if (activeUserId.current === ownerId && symbol === selectedSymbol) setSaved(false);
+      if (activeUserId.current === ownerId && symbol === selectedSymbol && normalizedExchange.toUpperCase() === (selectedSecExchange ?? exchangeFor(symbol)).toUpperCase()) setSaved(false);
       return true;
     } catch (cause) {
       if (activeUserId.current === ownerId) setAccountWatchlistState((current) => ({ ...current, ownerId, loading: false, error: cause instanceof Error ? cause.message : "Saved watchlist could not be updated." }));
@@ -317,12 +338,16 @@ function TradeApp() {
     if (!auth.user || !auth.client || !guestWatchlist.length) return false;
     const ownerId = auth.user.id;
     const repository = createWatchlistRepository(auth.client, ownerId);
+    setGuestImportState("saving");
     try {
       await repository.importSymbols(guestWatchlist, Object.fromEntries(guestWatchlist.map((symbol) => [symbol, exchangeFor(symbol)])));
       const rows = await repository.list();
       if (activeUserId.current === ownerId) setAccountWatchlistState({ ownerId, rows, loading: false, error: "" });
+      setGuestImportState("saved");
+      setConfirmGuestImport(false);
       return true;
     } catch (cause) {
+      setGuestImportState("error");
       if (activeUserId.current === ownerId) setAccountWatchlistState((current) => ({ ...current, ownerId, loading: false, error: cause instanceof Error ? cause.message : "Guest watchlist import did not complete." }));
       return false;
     }
@@ -369,26 +394,21 @@ function TradeApp() {
   }
 
   function enterTerminal() { moveWorkspace("overview"); }
-  function returnToLanding() {
-    setShowLanding(true);
-    if (window.location.pathname !== "/welcome") window.history.pushState({ landing: true }, "", "/welcome");
-  }
-
   if (showLanding) return <MotionConfig reducedMotion={reduced ? "always" : "user"}><LandingPage onEnter={enterTerminal} /></MotionConfig>;
 
   return (
     <MotionConfig reducedMotion={reduced ? "always" : "user"}><div className={`app-frame ${reduced ? "reduce-motion" : ""}`}>
       <div className="ambient ambient-a" /><div className="ambient ambient-b" />
-      <Sidebar active={activeWorkspace} onChange={moveWorkspace} collapsed={preferences.sidebarCollapsed} onCollapse={() => updatePreferences({ ...preferences, sidebarCollapsed: !preferences.sidebarCollapsed })} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} watchlist={watchlist} onSelectTicker={chooseTicker} onSearch={openTickerSearch} onPreferences={() => setActivePanel("preferences")} onHelp={() => openHelp()} onPublicCharts={openPublicCharts} dataMode={dataMode} accountName={auth.user?.email ?? "Jujosmi Labs"} accountStatus={auth.loading ? "Restoring session" : auth.user ? "Account watchlist" : auth.configured ? "Guest · sign-in available" : "Guest · accounts not configured"} />
+      <Sidebar active={activeWorkspace} onChange={moveWorkspace} collapsed={preferences.sidebarCollapsed} onCollapse={() => updatePreferences({ ...preferences, sidebarCollapsed: !preferences.sidebarCollapsed })} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} watchlist={watchlist} watchlistEntries={sidebarWatchlistEntries} onSelectTicker={chooseTicker} onSearch={openTickerSearch} onPreferences={() => setActivePanel("preferences")} onHelp={() => openHelp()} onPublicCharts={openPublicCharts} dataMode={dataMode} accountName={auth.user?.email ?? "Jujosmi Labs"} accountStatus={auth.loading ? "Restoring session" : auth.user ? "Account watchlist" : !auth.enabled ? "Guest · sign-in disabled" : auth.configured ? "Guest · sign-in available" : "Guest · accounts not configured"} />
       <main className="main-region">
         <header className="topbar">
-          <div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><SlidersHorizontal size={17} /></button><button className="breadcrumb-muted brand-home" onClick={returnToLanding} aria-label="Return to Jujosmi Trade landing page">Jujosmi Trade</button><span className="breadcrumb-slash">/</span><span className="breadcrumb-current">{workspaceLabels[activeWorkspace]}</span><span className="prototype-pill"><span /> PROTOTYPE</span></div>
-          <div className="topbar-actions"><label className="data-mode-control"><span className="sr-only">Data mode</span><select aria-label="Data mode" value={dataMode} onChange={(event) => changeDataMode(event.target.value as DataMode)}><option value="public">Public chart (TradingView)</option><option value="fixtures">Offline fixtures (dev)</option><option value="fastapi">FastAPI demo (synthetic)</option></select><ChevronDown size={11} /></label><span className="fixture-indicator"><span className="fixture-indicator-dot" /> {dataMode === "public" ? "PUBLIC CHART" : dataMode === "fastapi" ? "LOCAL API · SYNTHETIC" : "OFFLINE · SYNTHETIC"}</span><button className="icon-button top-icon" aria-label="Open Help and glossary" title="Help & glossary" onClick={() => openHelp()}><HelpCircle size={17} /></button><button className="icon-button top-icon" aria-label="Open Preferences" title="Preferences" onClick={() => setActivePanel("preferences")}><Settings2 size={17} /></button><div className="topbar-divider" /><AuthAccountMenu /></div>
+          <div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><SlidersHorizontal size={17} /></button><a className="breadcrumb-muted brand-home" href="https://jujosmi.com" aria-label="Visit Jujosmi.com">Jujosmi Trade</a><span className="breadcrumb-slash">/</span><span className="breadcrumb-current">{workspaceLabels[activeWorkspace]}</span>{import.meta.env.DEV && <span className="prototype-pill"><span /> PROTOTYPE</span>}</div>
+          <div className="topbar-actions">{import.meta.env.DEV && <><label className="data-mode-control"><span className="sr-only">Data mode</span><select aria-label="Data mode" value={dataMode} onChange={(event) => changeDataMode(event.target.value as DataMode)}><option value="public">Public chart (TradingView)</option><option value="fixtures">Offline fixtures (dev)</option><option value="fastapi">FastAPI demo (synthetic)</option></select><ChevronDown size={11} /></label><span className="fixture-indicator"><span className="fixture-indicator-dot" /> {dataMode === "public" ? "PUBLIC CHART" : dataMode === "fastapi" ? "LOCAL API · SYNTHETIC" : "OFFLINE · SYNTHETIC"}</span></>}<button className="icon-button top-icon" aria-label="Open Help and glossary" title="Help & glossary" onClick={() => openHelp()}><HelpCircle size={17} /></button><button className="icon-button top-icon" aria-label="Open Preferences" title="Preferences" onClick={() => setActivePanel("preferences")}><Settings2 size={17} /></button><div className="topbar-divider" /><AuthAccountMenu /></div>
         </header>
         <div className="workspace-content">
           {activeWorkspace === "watchlist" && auth.user && accountWatchlistLoading && <div className="workspace-state" role="status">Loading your private watchlist…</div>}
           {activeWorkspace === "watchlist" && watchlistError && <div className="workspace-state workspace-error" role="alert"><span>{watchlistError}</span><button className="quiet-button" onClick={() => setWatchlistRetry((value) => value + 1)}>Retry saved watchlist</button></div>}
-          {activeWorkspace === "watchlist" && auth.user && !accountWatchlistLoading && guestWatchlistToImport.length > 0 && <section className="watchlist-import-banner"><div><b>Temporary guest list available</b><p>Import these {guestWatchlistToImport.length} browser-session symbols into your signed-in account? Nothing is copied until you choose.</p></div><button className="account-action" onClick={() => void importGuestWatchlist()}><ShieldCheck size={15} />Import guest watchlist</button></section>}
+          {activeWorkspace === "watchlist" && auth.user && !accountWatchlistLoading && guestWatchlistToImport.length > 0 && <section className="watchlist-import-banner"><div><b>Temporary guest list available</b><p>{guestWatchlistToImport.length} browser-session symbols are available to add. Existing account entries will be kept; nothing is copied until you confirm.</p></div>{!confirmGuestImport ? <button className="account-action" onClick={() => { setGuestImportState("idle"); setConfirmGuestImport(true); }}><ShieldCheck size={15} />Review import</button> : <div className="watchlist-import-confirm" role="alertdialog" aria-label="Confirm guest watchlist import"><p>Import {guestWatchlistToImport.length} guest ticker/exchange entries into this account?</p><button className="account-action" disabled={guestImportState === "saving"} onClick={() => void importGuestWatchlist()}>{guestImportState === "saving" ? "Importing…" : "Confirm import"}</button><button className="quiet-button" disabled={guestImportState === "saving"} onClick={() => setConfirmGuestImport(false)}>Cancel</button></div>}{guestImportState === "saved" && <span role="status">Guest symbols were added; existing account entries were preserved.</span>}{guestImportState === "error" && <span role="alert">Import failed. Your guest list and saved account list remain available; retry when the connection is restored.</span>}</section>}
           {activeWorkspace === "overview" ? dataMode === "public" ? <PublicMarketOverview selectedSymbol={selectedSymbol} watchlist={watchlist} onSelectTicker={chooseTicker} onToggleWatchlist={toggleWatchlist} onNavigate={moveWorkspace} onHelp={() => openHelp("TradingView charts")} /> : <>
         <section className="page-heading">
               <div><div className="eyebrow"><span className="eyebrow-line" /> MARKET INTELLIGENCE <span className="eyebrow-dot">·</span> SAMPLE SESSION</div><h1>Good morning. <span>Let’s find clarity.</span></h1><p className="heading-subtitle">Your market view, with the details that matter.</p></div>
@@ -398,6 +418,7 @@ function TradeApp() {
       {dataMode === "fastapi" && [overviewEnvelope, analysisEnvelope, chartEnvelope, overviewWatchlist].some((response) => response?.stale) && <div className="workspace-fixture-note" role="status">Showing the last successful cached response. It is marked stale because the latest provider request did not complete.</div>}
             <details className="state-preview"><summary>Preview response states</summary><div className="state-preview-panel"><span>Local UI samples · no provider calls</span><div className="state-preview-buttons">{([{key:"ready",label:"Ready"},{key:"loading",label:"Loading"},{key:"unavailable",label:"Unavailable"},{key:"error",label:"Error"}] as const).map((option) => <button key={option.key} aria-pressed={previewDataState === option.key} className={previewDataState === option.key ? "state-preview-active" : ""} onClick={() => setPreviewDataState(option.key)}>{option.label}</button>)}</div></div></details>
 
+            {import.meta.env.DEV && isKestrelPreviewEnabled() && KestrelResearchPreview && <Suspense fallback={<div className="workspace-state" role="status">Loading Kestrel preview…</div>}><KestrelResearchPreview /></Suspense>}
             {showSummary && <section className="overview-summary" aria-label="Market summary"><div className="section-heading-row"><div><span className="section-kicker">YOUR MARKET SNAPSHOT</span><h2>Markets at a glance</h2></div><button className="text-action" onClick={() => moveWorkspace("discovery")}>Explore directory <ArrowDownRight size={14} /></button></div><div className="pulse-grid">{dataMode === "fastapi" && overviewState === "loading" ? <div className="workspace-state" role="status"><span className="loading-ring" /> Requesting synthetic market summary from local API…</div> : dataMode === "fastapi" && overviewState === "error" ? <div className="workspace-state workspace-error" role="alert"><CircleHelp size={18} /><div><b>Local API response unavailable</b><span>{overviewError ?? "Confirm the FastAPI service is running on localhost:8000."}</span></div><button className="quiet-button" onClick={() => setDataMode("fixtures")}>Use local fixtures</button></div> : (dataMode === "fastapi" ? overviewEnvelope?.data?.markets ?? [] : pulseFixtures).map((pulse, index) => <SpotlightCard key={pulse.symbol} className={`pulse-card pulse-${index}`}><div className="pulse-card-top"><span>{pulse.name}</span><span className="pulse-symbol">{pulse.symbol}</span></div><div className="pulse-value-row"><strong>{pulse.value}</strong><span className={pulse.tone === "up" ? "tone-up" : "tone-down"}>{pulse.tone === "up" ? <ArrowUpRight size={14} /> : <ArrowDown size={13} />}{pulse.change}</span></div><div className="mini-spark" aria-hidden="true"><svg viewBox="0 0 120 28" preserveAspectRatio="none"><path d={sparklinePath(pulse.series)} /></svg></div><div className="pulse-card-foot"><span>{dataMode === "fastapi" ? "Synthetic API response" : "Illustrative fixture"}</span><span>·</span><span>Not live market data</span></div></SpotlightCard>)}</div>{dataMode === "fastapi" && overviewEnvelope?.data?.disclosure && <p className="api-disclosure">{overviewEnvelope.data.disclosure}</p>}<div className="market-summary-detail-grid">{(dataMode === "fastapi" ? overviewEnvelope?.data?.markets ?? [] : pulseFixtures).map((pulse) => <ExpandableResearchCard key={`detail-${pulse.symbol}`} title={`${pulse.name} context`} subtitle={`${pulse.symbol} · simulated market summary`} preview={<span>{pulse.value} · {pulse.change}</span>} className="market-summary-detail"><div className="expandable-fact-grid"><div><span>Sample level</span><b>{pulse.value}</b></div><div><span>Sample change</span><b>{pulse.change}</b></div><div><span>Direction label</span><b>{pulse.tone === "up" ? "Up sample" : "Down sample"}</b></div></div><p>These prewritten fixture fields illustrate how a market summary could be explained. They do not contain live market or investment analysis.</p></ExpandableResearchCard>)}</div></section>}
 
             <section className="stock-workspace" aria-label="Selected ticker workspace">
@@ -439,7 +460,9 @@ function TradeApp() {
             </section>
 
             <footer className="page-footnote"><span>JUJOSMI TRADE UI 2.0</span><span>Design prototype · all financial data is illustrative</span><span>Market tools for clearer thinking</span></footer>
-          </> : activeWorkspace === "discovery" ? <DiscoveryWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedSecExchange={selectedSecExchange} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} /> : activeWorkspace === "research" ? <ResearchWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedSecExchange={selectedSecExchange} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} /> : <WatchlistWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onAddTicker={addWatchlistTicker} onRemoveTicker={removeWatchlistTicker} onNavigate={moveWorkspace} persistent={Boolean(auth.user)} accountLoading={accountWatchlistLoading} />}
+          </> : <Suspense fallback={<div className="workspace-state" role="status">Loading workspace…</div>}>
+            {activeWorkspace === "discovery" ? <DiscoveryWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedSecExchange={selectedSecExchange} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} /> : activeWorkspace === "research" ? <ResearchWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedSecExchange={selectedSecExchange} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onNavigate={moveWorkspace} onToggleWatchlist={(symbol) => { if (watchlist.includes(symbol)) void removeWatchlistTicker(symbol); else void addWatchlistTicker(symbol); }} /> : <WatchlistWorkspace dataMode={dataMode} selectedSymbol={selectedSymbol} selectedSecExchange={selectedSecExchange} selectedTicker={ticker} watchlist={watchlist} onSelectTicker={chooseTicker} onAddTicker={addWatchlistTicker} onRemoveTicker={removeWatchlistTicker} onNavigate={moveWorkspace} persistent={Boolean(auth.user)} accountLoading={accountWatchlistLoading} accountEntries={accountWatchlist} watchlistError={watchlistError} />}
+          </Suspense>}
         </div>
       </main>
       <AnimatePresence>{expandedChart && <motion.div className="chart-modal" initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="dialog" aria-modal="true" aria-label="Expanded chart" onClick={(event) => { if (event.target === event.currentTarget) setExpandedChart(false); }}><motion.div className="chart-modal-content" initial={reduced ? false : { y: 12, scale: 0.99 }} animate={{ y: 0, scale: 1 }} exit={{ y: 8, scale: 0.99 }}><div className="modal-head"><div><span className="section-kicker">{ticker.symbol} · SYNTHETIC FIXTURE</span><h2>Expanded chart</h2></div><button className="icon-button" onClick={() => setExpandedChart(false)} aria-label="Close expanded chart"><X size={18} /></button></div><PriceChart symbol={ticker.symbol} values={displayedChartValues} referencePrice={Number(ticker.price)} interval={range} style={chartStyle} dataState={dataMode === "fastapi" ? chartState === "loading" ? "loading" : chartState === "error" ? "error" : chartState === "ready" ? "ready" : "unavailable" : previewDataState} onStyleChange={setChartStyle} onExpand={() => setExpandedChart(false)} onRetry={() => dataMode === "fastapi" ? setChartRetry((value) => value + 1) : setPreviewDataState("ready")} useRawValues={dataMode === "fastapi"} /></motion.div></motion.div>}</AnimatePresence>
@@ -462,23 +485,26 @@ function PublicMarketOverview({ selectedSymbol, watchlist, onSelectTicker, onTog
   const matches = tradingViewTickerSymbols.filter((symbol) => symbol.includes(query.trim().toUpperCase()));
   return <div className="public-workspace">
     <section className="page-heading public-heading">
-      <div><div className="eyebrow"><span className="eyebrow-line" /> JUJOSMI TRADE <span className="eyebrow-dot">·</span> PUBLIC VIEW</div><h1>Market Overview</h1><p className="heading-subtitle">A TradingView chart with exchange-qualified symbol selection.</p></div>
+      <div><div className="eyebrow"><span className="eyebrow-line" /> JUJOSMI TRADE <span className="eyebrow-dot">·</span> PUBLIC VIEW</div><h1>Market Overview</h1><p className="heading-subtitle">{tradingViewWidgetEnabled ? "A TradingView chart with exchange-qualified symbol selection." : "Third-party charts are disabled in this release; SEC Company Research and guest watchlists remain available."}</p></div>
       <div className="public-symbol-tools">
         <label className="public-symbol-search"><Search size={15} /><input id="ticker-search" aria-label="Find supported chart ticker" aria-controls="public-symbol-suggestions" aria-expanded={Boolean(query)} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && matches[0]) { onSelectTicker(matches[0]); setQuery(""); } if (event.key === "Escape") setQuery(""); }} placeholder="Find a ticker" /><select aria-label="Selected chart ticker" value={selectedSymbol} onChange={(event) => onSelectTicker(event.target.value)}>{tradingViewTickerSymbols.map((symbol) => <option key={symbol} value={symbol}>{tradingViewSymbols[symbol]}</option>)}</select></label>
         {query && <div id="public-symbol-suggestions" className="public-symbol-suggestions" role="listbox" aria-label="Matching configured symbols">{matches.map((symbol) => <button role="option" aria-selected={symbol === selectedSymbol} key={symbol} onClick={() => { onSelectTicker(symbol); setQuery(""); }}>{tradingViewSymbols[symbol]}</button>)}{!matches.length && <span role="status">No configured ticker match.</span>}</div>}
       </div>
     </section>
-    <div className="public-data-note" role="note"><ShieldCheck size={16} /><span>TradingView chart · hosted by TradingView. Jujosmi does not extract chart data or use it in ratings. Other research sources are not enabled in this public view.</span><button type="button" className="notice-help" onClick={onHelp} aria-label="TradingView chart help"><CircleHelp size={14} /></button></div>
+    <div className="public-data-note" role="note"><ShieldCheck size={16} /><span>{tradingViewWidgetEnabled ? "TradingView chart · hosted by TradingView. Jujosmi does not extract chart data or use it in ratings. Other research sources are not enabled in this public view." : "TradingView is not loaded in this release. Third-party chart display remains disabled pending licensing review."}</span>{tradingViewWidgetEnabled && <button type="button" className="notice-help" onClick={onHelp} aria-label="TradingView chart help"><CircleHelp size={14} /></button>}</div>
     <section className="public-chart-panel">
-      <header className="public-chart-header"><div><span className="section-kicker">INTERACTIVE MARKET CHART</span><h2>{tradingViewSymbols[selectedSymbol] ?? selectedSymbol}</h2></div><button className={`outline-button ${watchlist.includes(selectedSymbol) ? "saved" : ""}`} onClick={onToggleWatchlist} aria-pressed={watchlist.includes(selectedSymbol)}><Star size={15} fill={watchlist.includes(selectedSymbol) ? "currentColor" : "none"} />{watchlist.includes(selectedSymbol) ? "In watchlist" : "Add to watchlist"}</button></header>
-      <TradingViewAdvancedChart symbol={selectedSymbol} theme="dark" />
+      <header className="public-chart-header"><div><span className="section-kicker">{tradingViewWidgetEnabled ? "INTERACTIVE MARKET CHART" : "CHART DISPLAY"}</span><h2>{tradingViewWidgetEnabled ? tradingViewSymbols[selectedSymbol] ?? selectedSymbol : "Chart unavailable"}</h2></div><button className={`outline-button ${watchlist.includes(selectedSymbol) ? "saved" : ""}`} onClick={onToggleWatchlist} aria-pressed={watchlist.includes(selectedSymbol)}><Star size={15} fill={watchlist.includes(selectedSymbol) ? "currentColor" : "none"} />{watchlist.includes(selectedSymbol) ? "In watchlist" : "Add to watchlist"}</button></header>
+      {tradingViewWidgetEnabled ? <Suspense fallback={<div className="workspace-state" role="status">Loading TradingView chart…</div>}><TradingViewAdvancedChart symbol={selectedSymbol} theme="dark" /></Suspense> : <div className="workspace-state release-disabled-state" role="status">
+        <div><b>TradingView chart is disabled in this release.</b><span>Third-party chart display is awaiting a confirmed licensing decision. SEC Company Research and the guest watchlist remain available.</span></div>
+        <div className="chart-disabled-actions"><button className="text-action" onClick={() => onNavigate("research")}>Open Company Research</button><button className="text-action" onClick={() => onNavigate("watchlist")}>Open Guest Watchlist</button></div>
+      </div>}
     </section>
     <section className="public-unavailable-grid" aria-label="Market research availability">
       <UnavailableCard title="Market summary" detail="Market indices, volatility measures, and sector participation are unavailable because no licensed market-summary source is connected." />
       <UnavailableCard title="Technical ratings" detail="Jujosmi technical calculations are retained for future licensed inputs. TradingView widget data is not read or used for ratings." />
       <UnavailableCard title="Company information" detail="Company fundamentals, analyst views, headlines, and calendars are unavailable in public mode until their sources and use rights are approved." />
     </section>
-    <footer className="page-footnote"><span>JUJOSMI TRADE UI 2.0</span><span>Chart © TradingView · availability may vary by market</span><button className="text-action" onClick={() => onNavigate("research")}>Open Company Research <ArrowDownRight size={14} /></button></footer>
+    <footer className="page-footnote"><span>JUJOSMI TRADE UI 2.0</span>{tradingViewWidgetEnabled && <span>Chart © TradingView · availability may vary by market</span>}<button className="text-action" onClick={() => onNavigate("research")}>Open Company Research <ArrowDownRight size={14} /></button></footer>
   </div>;
 }
 

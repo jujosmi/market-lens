@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -18,6 +18,17 @@ afterEach(() => {
 });
 
 describe("Jujosmi Trade UI 2.0 prototype", () => {
+  it("shows the new logo and links top-left branding to Jujosmi.com in the current tab", () => {
+    render(<App />);
+    const brandLinks = screen.getAllByRole("link", { name: "Visit Jujosmi.com" });
+    expect(brandLinks).toHaveLength(2);
+    for (const link of brandLinks) {
+      expect(link).toHaveAttribute("href", "https://jujosmi.com");
+      expect(link).not.toHaveAttribute("target");
+    }
+    expect(screen.getByRole("img", { name: "Jujosmi Labs" })).toHaveAttribute("src", "/jujosmi-logo-simple-shadow.png");
+  });
+
   it("defaults to a public view and embeds a branded TradingView chart without rendering fixture metrics", async () => {
     render(<App />);
     expect(screen.getByRole("combobox", { name: "Data mode" })).toHaveValue("public");
@@ -34,8 +45,8 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Account sign-in" }));
-    expect(screen.getByText(/Account sync is unavailable because this local build has no Supabase URL/)).toBeInTheDocument();
-    expect(screen.getByText("No account session is simulated or created.")).toBeInTheDocument();
+    expect(screen.getByText(/Account sign-in is disabled in this release/)).toBeInTheDocument();
+    expect(screen.getByText("No account service is contacted and no session is created.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Market Overview" })).toBeInTheDocument();
   });
 
@@ -44,8 +55,8 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     render(<App />);
     await user.selectOptions(screen.getByRole("combobox", { name: "Selected chart ticker" }), "JPM");
     await waitFor(() => {
-      const script = document.querySelector("script[src*='embed-widget-advanced-chart.js']");
-      expect(JSON.parse(script?.textContent ?? "{}").symbol).toBe("NYSE:JPM");
+      const scripts = Array.from(document.querySelectorAll("script[src*='embed-widget-advanced-chart.js']"));
+      expect(scripts.some((script) => JSON.parse(script.textContent ?? "{}").symbol === "NYSE:JPM")).toBe(true);
     });
     expect(screen.getByRole("heading", { name: "NYSE:JPM" })).toBeInTheDocument();
   });
@@ -54,12 +65,12 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Discovery" }));
-    expect(screen.getByRole("heading", { name: "Explore SEC company records." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Explore SEC company records." })).toBeInTheDocument();
     expect(screen.getByText(/not a complete or authoritative list of currently tradable securities/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Company Research" }));
-    expect(screen.getByText(/Identity loads from the official SEC directory/)).toBeInTheDocument();
+    expect(await screen.findByText(/Identity loads from the official SEC directory/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Watchlist" }));
-    expect(screen.getByRole("heading", { name: "4 tickers" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "4 tickers" })).toBeInTheDocument();
     expect(screen.getAllByText("Quote and company research unavailable")).toHaveLength(4);
   });
 
@@ -101,15 +112,79 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     expect(screen.getByText(/Electronic Computers/)).toBeInTheDocument();
   });
 
-  it("renders SEC-sourced issuer identity, original fact values, and filing provenance in public research", async () => {
-    const fact = { field: "revenue", taxonomy: "us-gaap", tag: "RevenueFromContractWithCustomerExcludingAssessedTax", label: "Revenue", value: 123456, original_value: "123456.00", unit: "USD", currency: "USD", period_start: "2025-10-01", period_end: "2025-12-31", fiscal_year: 2025, fiscal_period: "Q4", form: "10-Q", filed: "2026-02-01", accession_number: "0000320193-26-000001", filing_url: "https://www.sec.gov/Archives/edgar/data/320193/000032019326000001/q.htm", latest_reported_version: true };
-    const data = { identity: { cik: "0000320193", ticker: "AAPL", name: "Apple Inc.", exchange: "Nasdaq", identity_source: "sec_company_tickers" }, facts: [fact], filings: [{ cik: "0000320193", accession_number: fact.accession_number, form: "10-Q", filing_date: "2026-02-01", report_period: "2025-12-31", primary_document: "q.htm", filing_url: fact.filing_url }], missing_fields: ["net_income"], source: "SEC EDGAR submissions and Company Facts", live_data: true, status: "partial", as_of: "2026-02-02T12:00:00Z", warnings: ["One standard field is not reported."] };
-    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data, status: "partial", source: "sec-edgar", freshness: "live", as_of: data.as_of, provenance: "Official SEC EDGAR", missing_fields: data.missing_fields, warnings: data.warnings }), { status: 200, headers: { "Content-Type": "application/json" } })));
+  it("shows public SEC Events & Filings and classifies only filing items explicitly supplied by SEC", async () => {
+    const report = { identity: { cik: "0001045810", ticker: "NVDA", name: "NVIDIA Corporation", exchange: "Nasdaq", identity_source: "sec_company_tickers" }, facts: [], annual_periods: [], quarterly_periods: [], ytd_periods: [], filings: [], missing_fields: [], source: "SEC EDGAR", live_data: true, status: "partial", as_of: "2026-11-18T12:00:00Z", warnings: [] };
+    const filingData = { ticker: "NVDA", company_name: "NVIDIA Corporation", cik: "0001045810", exchange: "Nasdaq", sic: null, sic_description: null, forms: ["8-K", "10-Q"], disclosure: "SEC filed documents.", filings: [
+      { cik: "0001045810", ticker: "NVDA", company_name: "NVIDIA Corporation", exchange: "Nasdaq", sic: null, sic_description: null, form: "8-K", filing_date: "2026-11-17", report_date: "2026-11-16", accession_number: "0001045810-26-000001", primary_document: "current.htm", filing_url: "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/current.htm", items: "2.02, 9.01" },
+      { cik: "0001045810", ticker: "NVDA", company_name: "NVIDIA Corporation", exchange: "Nasdaq", sic: null, sic_description: null, form: "8-K", filing_date: "2026-11-16", report_date: null, accession_number: "0001045810-26-000002", primary_document: "current2.htm", filing_url: "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000002/current2.htm", items: null },
+      { cik: "0001045810", ticker: "NVDA", company_name: "NVIDIA Corporation", exchange: "Nasdaq", sic: null, sic_description: null, form: "8-K", filing_date: "2026-11-15", report_date: null, accession_number: "0001045810-26-000003", primary_document: "current3.htm", filing_url: "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000003/current3.htm", items: "5.02" },
+    ] };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      const data = url.includes("/discovery/filings/") ? filingData : report;
+      return Promise.resolve(new Response(JSON.stringify({ data, status: "partial", source: "sec-edgar", freshness: "cached", as_of: "2026-11-18T12:00:00Z", missing_fields: [], warnings: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Company Research" }));
+    await user.click(screen.getByRole("tab", { name: "Events & Filings" }));
+    expect(await screen.findByText("Results of operations and financial condition · Item 2.02")).toBeInTheDocument();
+    expect(screen.getByText("Current report · item metadata unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Departure, election, or appointment of certain officers · Item 5.02")).toBeInTheDocument();
+    expect(screen.getByText("Filing date: 2026-11-17 · Report date: 2026-11-16")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Open source filing" })[0]).toHaveAttribute("href", expect.stringContaining("sec.gov/Archives"));
+    expect(screen.queryByText(/Analyst expectations/)).not.toBeInTheDocument();
+  });
+
+  it("provides company-specific provider-hosted news and technical links instead of empty public tabs", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Company Research" }));
+    await user.click(screen.getByRole("tab", { name: "News" }));
+    expect(screen.getByRole("link", { name: /Open company news at TradingView/ })).toHaveAttribute("href", "https://www.tradingview.com/symbols/NASDAQ-NVDA/news/");
+    expect(screen.getByText(/does not copy headlines, add sentiment labels/)).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Technical" }));
+    expect(screen.getByRole("link", { name: /Open technical analysis at TradingView/ })).toHaveAttribute("href", "https://www.tradingview.com/symbols/NASDAQ-NVDA/technicals/");
+    expect(screen.getByText(/does not extract indicators/)).toBeInTheDocument();
+  });
+
+  it("does not let a slow previous SEC response replace the newly selected company's research", async () => {
+    const pending: { symbol: string; resolve: (response: Response) => void }[] = [];
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => new Promise<Response>((resolve) => {
+      const match = String(input).match(/\/companies\/([A-Z]+)\/sec-research/);
+      if (match) pending.push({ symbol: match[1]!, resolve });
+      else resolve(new Response("{}", { status: 404 }));
+    }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Company Research" }));
+    await waitFor(() => expect(pending.some((item) => item.symbol === "NVDA")).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Market Overview" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Selected chart ticker" }), "AAPL");
+    await user.click(screen.getByRole("button", { name: "Company Research" }));
+    await waitFor(() => expect(pending.some((item) => item.symbol === "AAPL")).toBe(true));
+    const report = (ticker: string, name: string, cik: string) => ({ data: { identity: { cik, ticker, name, exchange: "Nasdaq", identity_source: "sec_company_tickers" }, facts: [], filings: [], annual_periods: [], quarterly_periods: [], ytd_periods: [], missing_fields: [], source: "SEC EDGAR", live_data: true, status: "partial", as_of: "2026-11-18T12:00:00Z", warnings: [] }, status: "partial", source: "sec-edgar", freshness: "cached", missing_fields: [], warnings: [] });
+    const respond = async (symbol: string, name: string, cik: string) => {
+      await act(async () => pending.find((item) => item.symbol === symbol)!.resolve(new Response(JSON.stringify(report(symbol, name, cik)), { status: 200, headers: { "Content-Type": "application/json" } })));
+    };
+    await respond("AAPL", "Apple Inc.", "0000320193");
     expect(await screen.findByRole("heading", { name: /Apple Inc\./ })).toBeInTheDocument();
+    await respond("NVDA", "NVIDIA Corporation", "0001045810");
+    expect(screen.getByRole("heading", { name: /Apple Inc\./ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /NVIDIA Corporation/ })).not.toBeInTheDocument();
+  });
+
+  it("renders SEC-sourced issuer identity, original fact values, and filing provenance in public research", async () => {
+    const fact = { field: "revenue", taxonomy: "us-gaap", tag: "RevenueFromContractWithCustomerExcludingAssessedTax", label: "Revenue", value: 123456, original_value: "123456.00", unit: "USD", currency: "USD", period_start: "2025-10-01", period_end: "2025-12-31", fiscal_year: 2025, fiscal_period: "Q4", form: "10-Q", filed: "2026-02-01", accession_number: "0001045810-26-000001", filing_url: "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/q.htm", latest_reported_version: true };
+    const data = { identity: { cik: "0001045810", ticker: "NVDA", name: "NVIDIA Corporation", exchange: "Nasdaq", identity_source: "sec_company_tickers" }, facts: [fact], filings: [{ cik: "0001045810", accession_number: fact.accession_number, form: "10-Q", filing_date: "2026-02-01", report_period: "2025-12-31", primary_document: "q.htm", filing_url: fact.filing_url }], missing_fields: ["net_income"], source: "SEC EDGAR submissions and Company Facts", live_data: true, status: "partial", as_of: "2026-02-02T12:00:00Z", warnings: ["One standard field is not reported."] };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data, status: "partial", source: "sec-edgar", freshness: "live", as_of: data.as_of, provenance: "Official SEC EDGAR", missing_fields: data.missing_fields, warnings: data.warnings }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Selected chart ticker" }), "NVDA");
+    await user.click(screen.getByRole("button", { name: "Company Research" }));
+    expect(await screen.findByRole("heading", { name: /NVIDIA Corporation/ })).toBeInTheDocument();
     expect(screen.getByText("123456.00 USD")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Company facts & latest filings" })).toBeInTheDocument();
     expect(screen.getByText(/Source: U.S. Securities and Exchange Commission EDGAR/)).toBeInTheDocument();
@@ -215,12 +290,12 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     renderDevelopmentApp();
     const nav = screen.getByRole("navigation", { name: "Workspaces" });
     await user.click(within(nav).getByRole("button", { name: /Discovery/i }));
-    expect(screen.getByRole("heading", { name: "Explore the market." })).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Simulated company directory" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Explore the market." })).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: "Simulated company directory" })).toBeInTheDocument();
     await user.click(within(nav).getByRole("button", { name: /Company Research/i }));
-    expect(screen.getByRole("heading", { name: "Business & valuation" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Business & valuation" })).toBeInTheDocument();
     await user.click(within(nav).getByRole("button", { name: "Watchlist" }));
-    expect(screen.getByRole("table", { name: "Session watchlist" })).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: "Session watchlist" })).toBeInTheDocument();
   });
 
   it("uses the API calendar view in FastAPI mode", async () => {
@@ -261,10 +336,15 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     renderDevelopmentApp();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Data mode" }), "fastapi");
+    fireEvent.change(screen.getByRole("combobox", { name: "Data mode" }), { target: { value: "fastapi" } });
+    expect(screen.getByRole("combobox", { name: "Data mode" })).toHaveValue("fastapi");
+    expect(screen.getByText("LOCAL API · SYNTHETIC")).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Workspaces" });
     await user.click(within(nav).getByRole("button", { name: "Watchlist" }));
-    expect(await screen.findByText("NVIDIA from Python")).toBeInTheDocument();
+    expect(screen.getByText("LOCAL API · SYNTHETIC")).toBeInTheDocument();
+    expect(screen.getByText("PYTHON SAMPLE CLOSE")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/watchlist/summaries"))).toBe(true));
+    expect(await screen.findByText(/NVIDIA from Python · NASDAQ/)).toBeInTheDocument();
     expect(screen.getAllByText("$999.25").length).toBe(4);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/watchlist/summaries"))).toBe(true);
   });
@@ -297,8 +377,8 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Filter industry" }), "Semiconductors");
     expect(screen.getByRole("heading", { name: "1 companies in view" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Research NVDA" }));
-    expect(screen.getByRole("heading", { name: /NVIDIA Corporation/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Business & valuation" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /NVIDIA Corporation/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Business & valuation" })).toBeInTheDocument();
   });
 
   it("shows distinct Discovery loading and recoverable error states", async () => {
@@ -337,6 +417,7 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     const user = userEvent.setup();
     renderDevelopmentApp();
     await user.click(screen.getByRole("button", { name: "Watchlist" }));
+    await screen.findByRole("table", { name: "Session watchlist" });
     await user.type(screen.getByRole("textbox", { name: "Search tickers to add" }), "GOOGL");
     await user.click(screen.getByRole("option", { name: /GOOGL/ }));
     expect(screen.getByRole("status")).toHaveTextContent("GOOGL added to this browser-session watchlist");
@@ -346,10 +427,10 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     const rows = within(table).getAllByRole("row");
     expect(rows[1]).toHaveTextContent("NVDA");
     expect(rows[2]).toHaveTextContent("AMZN");
-    await user.click(screen.getByRole("button", { name: "Research GOOGL" }));
-    expect(screen.getByRole("heading", { name: /Alphabet Inc./ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Research GOOGL/ }));
+    expect(await screen.findByRole("heading", { name: /Alphabet Inc./ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Watchlist" }));
-    await user.click(screen.getByRole("button", { name: "Remove GOOGL from watchlist" }));
+    await user.click(screen.getByRole("button", { name: "Remove GOOGL from NASDAQ watchlist entry" }));
     expect(screen.getByRole("table", { name: "Session watchlist" })).not.toHaveTextContent("GOOGL");
   });
 
@@ -385,34 +466,39 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
 
   it("opens the welcome landing and enters a directly routable terminal workspace", async () => {
     const user = userEvent.setup();
-    renderDevelopmentApp();
-    await user.click(screen.getByRole("button", { name: "Return to Jujosmi Trade landing page" }));
+    window.history.replaceState({}, "", "/welcome");
+    render(<App />);
     expect(screen.getByRole("heading", { name: /Jujosmi Trade/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Visit Jujosmi.com" })).toHaveAttribute("href", "https://jujosmi.com");
     await user.click(screen.getByRole("button", { name: "Enter Jujosmi Trade" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Data mode" }), { target: { value: "fixtures" } });
     expect(window.location.pathname).toBe("/market-overview");
     expect(screen.getByRole("heading", { name: /Good morning/ })).toBeInTheDocument();
   });
 
   it("supports keyboard activation of the landing action", async () => {
     const user = userEvent.setup();
-    renderDevelopmentApp();
-    await user.click(screen.getByRole("button", { name: "Return to Jujosmi Trade landing page" }));
+    window.history.replaceState({}, "", "/welcome");
+    const first = render(<App />);
     const enter = screen.getByRole("button", { name: "Enter Jujosmi Trade" });
     enter.focus();
     await user.keyboard("{Enter}");
     expect(window.location.pathname).toBe("/market-overview");
-    expect(screen.getByRole("heading", { name: /Good morning/ })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Return to Jujosmi Trade landing page" }));
+    expect(screen.getByRole("heading", { name: "Market summary" })).toBeInTheDocument();
+    first.unmount();
+    window.history.replaceState({}, "", "/welcome");
+    render(<App />);
     screen.getByRole("button", { name: "Enter Jujosmi Trade" }).focus();
     await user.keyboard(" ");
     expect(window.location.pathname).toBe("/market-overview");
+    expect(screen.getByRole("heading", { name: "Market summary" })).toBeInTheDocument();
   });
 
-  it("loads a bookmarked workspace route directly", () => {
+  it("loads a bookmarked workspace route directly", async () => {
     window.history.replaceState({}, "", "/watchlist");
     renderDevelopmentApp();
-    expect(screen.getByRole("heading", { name: "Keep your research close." })).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Session watchlist" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Keep your research close." })).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: "Session watchlist" })).toBeInTheDocument();
   });
 
   it("opens a simulated Discovery preview and routes its action into Company Research", async () => {
@@ -424,7 +510,7 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     expect(within(dialog).getByText("Semiconductors")).toBeInTheDocument();
     expect(within(dialog).getByText(/simulated demonstration fixtures/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Open Company Research" }));
-    expect(screen.getByRole("heading", { name: "Business & valuation" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Business & valuation" })).toBeInTheDocument();
   });
 
   it("renders local FastAPI overview data when demonstration mode is selected", async () => {
@@ -549,7 +635,7 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
 
     expect(document.querySelector(".sidebar")).toHaveClass("sidebar-collapsed");
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem("jujosmi_trade_ui_preferences_v1") ?? "{}")).toMatchObject({ defaultSymbol: "AAPL", reduceAnimations: true, sidebarCollapsed: true }));
-    await waitFor(() => expect(JSON.parse(document.querySelector("script[src*='embed-widget-advanced-chart.js']")?.textContent ?? "{}").symbol).toBe("NASDAQ:AAPL"));
+    await waitFor(() => expect(Array.from(document.querySelectorAll("script[src*='embed-widget-advanced-chart.js']")).some((script) => JSON.parse(script.textContent ?? "{}").symbol === "NASDAQ:AAPL")).toBe(true));
 
     await user.click(screen.getAllByRole("button", { name: "Open Preferences" })[1]!);
     expect(screen.getByRole("dialog", { name: "Preferences" })).toBeInTheDocument();

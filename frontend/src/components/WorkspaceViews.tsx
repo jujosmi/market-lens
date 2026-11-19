@@ -4,11 +4,15 @@ import { SpotlightCard } from "./SpotlightCard";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { ExpandableResearchCard } from "./ExpandableResearchCard";
 import { fixtureRepository, sectors, type DirectoryFixture } from "../data/workspaceFixtures";
-import { ApiRequestError, fetchCompanyResearch, fetchDiscovery, fetchDiscoveryCalendar, fetchNewsEvents, fetchSecDirectory, fetchSecFilings, fetchSecResearch, fetchTechnicalAnalysis, fetchWatchlistSummaries, type ApiEnvelope, type DiscoveryCalendarData, type DiscoveryData, type NewsEventsData, type ResearchData, type SecCompanyReport, type SecDirectoryData, type SecFilingsData, type TechnicalAnalysisData, type WatchlistSummaryData } from "../data/apiClient";
+import { buildSecResearchMetrics, reportableBalanceSheetContext } from "../data/secResearchMetrics";
+import { ApiRequestError, fetchCompanyResearch, fetchDiscovery, fetchDiscoveryCalendar, fetchNewsEvents, fetchSecDirectory, fetchSecFilings, fetchSecResearch, fetchTechnicalAnalysis, fetchWatchlistSummaries, type ApiEnvelope, type DiscoveryCalendarData, type DiscoveryData, type NewsEventsData, type ResearchData, type SecCompanyReport, type SecDirectoryData, type SecFilingActivity, type SecFilingsData, type TechnicalAnalysisData, type WatchlistSummaryData } from "../data/apiClient";
 import type { DataMode } from "../types";
-import { tradingViewTickerSymbols } from "../data/tradingViewSymbols";
+import { tradingViewSymbols, tradingViewTickerSymbols } from "../data/tradingViewSymbols";
+import { SecFinancialStatements } from "./SecFinancialStatements";
 
-type CommonProps = { selectedSymbol: string; selectedSecExchange?: string | null; selectedTicker: (typeof tickerFixtures)[number]; watchlist: string[]; onSelectTicker: (symbol: string, exchange?: string) => void; onNavigate: (workspace: "research" | "overview") => void };
+type CommonProps = { selectedSymbol: string; selectedSecExchange?: string | null; selectedTicker: (typeof tickerFixtures)[number]; watchlist: string[]; onSelectTicker: (symbol: string, exchange?: string) => void; onNavigate: (workspace: "research" | "overview") => void; onToggleWatchlist?: (symbol: string) => void };
+type AccountWatchlistEntry = { id: string; symbol: string; exchange: string };
+type WatchlistTicker = ReturnType<typeof tickerFor> & { exchange: string; identityKey: string };
 const tickerFixtures = fixtureRepository.getTickers();
 const companyResearchFixtures = fixtureRepository.getResearch();
 const tickerFor = (symbol: string) => tickerFixtures.find((item) => item.symbol === symbol) ?? tickerFixtures[0]!;
@@ -112,57 +116,149 @@ function FixtureResearchWorkspace({ selectedTicker, onNavigate }: CommonProps) {
 }
 
 export function ResearchWorkspace(props: CommonProps & { dataMode?: DataMode }) {
-  if (props.dataMode === "public") return <PublicResearchWorkspace symbol={props.selectedSymbol} exchange={props.selectedSecExchange} onNavigate={props.onNavigate} />;
+  if (props.dataMode === "public") return <PublicResearchWorkspace symbol={props.selectedSymbol} exchange={props.selectedSecExchange} onNavigate={props.onNavigate} watchlisted={props.watchlist.includes(props.selectedSymbol)} onToggleWatchlist={props.onToggleWatchlist} />;
   return props.dataMode === "fastapi" ? <EngineResearchWorkspace {...props} /> : <FixtureResearchWorkspace {...props} />;
 }
 
-function PublicResearchWorkspace({ symbol, exchange, onNavigate }: { symbol: string; exchange?: string | null; onNavigate: (workspace: "research" | "overview") => void }) {
+function PublicResearchWorkspace({ symbol, exchange, onNavigate, watchlisted, onToggleWatchlist }: { symbol: string; exchange?: string | null; onNavigate: (workspace: "research" | "overview") => void; watchlisted: boolean; onToggleWatchlist?: (symbol: string) => void }) {
   const [tab, setTab] = useState("Overview");
   const [secResponse, setSecResponse] = useState<ApiEnvelope<SecCompanyReport> | null>(null);
   const [secError, setSecError] = useState("");
   const [secLoading, setSecLoading] = useState(false);
-  const tabs = ["Overview", "Financials", "Analysts & events", "News", "Technical"];
-  const names: Record<string, string> = { Overview: "Business & valuation", Financials: "Reported financials", "Analysts & events": "Analyst & company events", News: "Headlines & sentiment", Technical: "Technical & relative strength" };
+  const [filingsResponse, setFilingsResponse] = useState<ApiEnvelope<SecFilingsData> | null>(null);
+  const [filingsState, setFilingsState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [filingsError, setFilingsError] = useState("");
+  const [filingsRetry, setFilingsRetry] = useState(0);
+  const tabs = ["Overview", "Financials", "Events & Filings", "News", "Technical"];
+  const names: Record<string, string> = { Overview: "Business & financial summary", Financials: "Reported financials", "Events & Filings": "SEC events & filings", News: "Company news access", Technical: "Technical analysis access" };
   useEffect(() => {
     if (tab !== "Overview" && tab !== "Financials") return;
     const controller = new AbortController();
+    let active = true;
     setSecLoading(true); setSecError(""); setSecResponse(null);
-    fetchSecResearch(symbol, controller.signal, exchange).then(setSecResponse).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+    fetchSecResearch(symbol, controller.signal, exchange).then((response) => {
+      if (!active) return;
+      if (response.data?.identity.ticker.toUpperCase() !== symbol.toUpperCase()) {
+        setSecError("SEC returned company facts for a different ticker. Verify the selected issuer and exchange.");
+        return;
+      }
+      setSecResponse(response);
+    }).catch((error: unknown) => {
+      if (!active || (error instanceof DOMException && error.name === "AbortError")) return;
       setSecError(error instanceof ApiRequestError ? error.message : "SEC reported company information is unavailable.");
-    }).finally(() => { if (!controller.signal.aborted) setSecLoading(false); });
-    return () => controller.abort();
+    }).finally(() => { if (active) setSecLoading(false); });
+    return () => { active = false; controller.abort(); };
   }, [symbol, exchange, tab]);
-  const secReport = secResponse?.data ?? undefined;
+  useEffect(() => {
+    if (tab !== "Events & Filings") { setFilingsState("idle"); return; }
+    const controller = new AbortController();
+    let active = true;
+    setFilingsResponse(null); setFilingsError(""); setFilingsState("loading");
+    fetchSecFilings(symbol, exchange ?? undefined, controller.signal).then((response) => {
+      if (!active) return;
+      if (response.data?.ticker.toUpperCase() === symbol.toUpperCase()) { setFilingsResponse(response); setFilingsState("ready"); }
+      else { setFilingsError("SEC returned filing records for a different ticker. Verify the selected issuer and exchange."); setFilingsState("error"); }
+    }).catch((error: unknown) => {
+      if (!active || (error instanceof DOMException && error.name === "AbortError")) return;
+      setFilingsError(error instanceof ApiRequestError ? error.message : "SEC company submissions could not be loaded."); setFilingsState("error");
+    });
+    return () => { active = false; controller.abort(); };
+  }, [symbol, exchange, tab, filingsRetry]);
+  const secMatchesSelection = secResponse?.data?.identity.ticker.toUpperCase() === symbol.toUpperCase();
+  const secReport = secMatchesSelection ? secResponse?.data ?? undefined : undefined;
   return <div className="functional-workspace">
     <WorkspaceHeading kicker="COMPANY RESEARCH" title="Research with clear sources." description="Public research panels are shown only when their sources and usage terms are established." badge="PUBLIC SOURCE STATUS" />
-    <div className="research-company-header"><div className="ticker-avatar">{(secReport?.identity.name ?? symbol).slice(0, 1)}</div><div className="research-company-name"><span>{secReport ? `CIK ${secReport.identity.cik} · ${secReport.identity.exchange ?? "Exchange not listed"} · SEC issuer identity` : "SEC issuer identity"}</span><h2>{secReport?.identity.name ?? symbol} <small>{secReport?.identity.ticker ?? symbol}</small></h2><p><span className="fixture-indicator-dot" />{secReport ? "Company identity verified against SEC ticker/CIK directory" : "Identity loads from the official SEC directory when available"}</p></div><button className="outline-button" onClick={() => onNavigate("overview")}>Market overview <ArrowDownRight size={14} /></button></div>
+    <div className="research-company-header"><div className="ticker-avatar">{(secReport?.identity.name ?? symbol).slice(0, 1)}</div><div className="research-company-name"><span>{secReport ? `CIK ${secReport.identity.cik} · ${secReport.identity.exchange ?? "Exchange not listed"} · SEC issuer identity` : "SEC issuer identity"}</span><h2>{secReport?.identity.name ?? symbol} <small>{secReport?.identity.ticker ?? symbol}</small></h2><p><span className="fixture-indicator-dot" />{secReport ? "Company identity verified against SEC ticker/CIK directory" : "Identity loads from the official SEC directory when available"}</p></div><button className={`outline-button ${watchlisted ? "saved" : ""}`} aria-pressed={watchlisted} onClick={() => onToggleWatchlist?.(symbol)}><Bookmark size={14} fill={watchlisted ? "currentColor" : "none"} />{watchlisted ? "Saved · remove" : "Save to watchlist"}</button><button className="outline-button" onClick={() => onNavigate("overview")}>Market overview <ArrowDownRight size={14} /></button></div>
     <WorkspaceTabs label="Company research sections" items={tabs} value={tab} onChange={setTab} />
     <div className="discovery-summary-row"><div><span className="section-kicker">{tab.toUpperCase()} · {symbol}</span><h2>{names[tab]}</h2></div></div>
-    {tab === "Overview" || tab === "Financials" ? <SecFinancialPanel loading={secLoading} error={secError} report={secReport} envelope={secResponse} mode={tab} /> : <UnavailablePanel title={names[tab]} detail="This feature is retained in the application, but no source with verified public-use rights is connected. No synthetic or personal-use data is substituted in public mode. TradingView's chart remains a separate embed and is not used to calculate these research panels." />}
+    {tab === "Overview" || tab === "Financials" ? <SecFinancialPanel loading={secLoading || Boolean(secResponse && !secMatchesSelection)} error={secError} report={secReport} envelope={secMatchesSelection ? secResponse : null} mode={tab} />
+      : tab === "Events & Filings" ? <SecEventsPanel symbol={symbol} response={filingsResponse} loading={filingsState === "loading"} error={filingsError} state={filingsState} onRetry={() => setFilingsRetry((value) => value + 1)} />
+      : <TradingViewResearchAccess symbol={symbol} kind={tab === "News" ? "news" : "technical"} />}
   </div>;
+}
+
+function classifySecFiling(filing: SecFilingActivity) {
+  if (filing.form.startsWith("10-K") || filing.form.startsWith("20-F") || filing.form.startsWith("40-F")) return "Annual report";
+  if (filing.form.startsWith("10-Q")) return "Quarterly report";
+  if (filing.form.startsWith("8-K")) {
+    const itemCodes = (filing.items ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+    const labels: string[] = [];
+    if (itemCodes.includes("2.02")) labels.push("Results of operations and financial condition · Item 2.02");
+    if (itemCodes.includes("5.02")) labels.push("Departure, election, or appointment of certain officers · Item 5.02");
+    if (labels.length) return labels.join("; ");
+    return itemCodes.length ? `Current report · Items ${itemCodes.join(", ")}` : "Current report · item metadata unavailable";
+  }
+  if (filing.form.startsWith("S-1")) return "Registration statement · not a confirmed IPO date";
+  return "SEC filing";
+}
+
+function SecEventsPanel({ symbol, response, loading, error, state, onRetry }: { symbol: string; response: ApiEnvelope<SecFilingsData> | null; loading: boolean; error: string; state: string; onRetry: () => void }) {
+  const data = response?.data;
+  return <section className="public-unavailable-card sec-company-events" aria-label="SEC company events and filings">
+    <div className="sec-title-row"><div><span className="section-kicker">OFFICIAL SEC SUBMISSIONS</span><h3>Recent company events & filings · {symbol}</h3></div>{response && <span className="sec-freshness">{response.freshness === "cached" ? "CACHED" : "RETRIEVED"}</span>}</div>
+    <p>Filed disclosures, not a forecast of future events. An 8-K is identified as earnings-related only when SEC item metadata includes Item 2.02.</p>
+    {loading && <div className="workspace-state" role="status"><span className="loading-ring" /> Loading SEC submissions…</div>}
+    {error && <div className="workspace-state workspace-error" role="alert"><CircleHelp size={18}/><div><b>SEC event records unavailable</b><span>{error}</span></div><button className="quiet-button" onClick={onRetry}>Retry filings</button></div>}
+    {data && <>
+      <div className="sec-issuer-summary"><div><b>{data.company_name} ({data.ticker})</b><p>CIK {data.cik}{data.exchange ? ` · ${data.exchange}` : " · Exchange not listed"}</p></div><a href={`https://www.sec.gov/edgar/browse/?CIK=${data.cik}&owner=exclude`} target="_blank" rel="noreferrer">All SEC filings <ArrowDownRight size={13}/></a></div>
+      {data.filings.length ? <div className="sec-filings-list">{data.filings.map((filing) => <article className="sec-filing-row" key={filing.accession_number}><div><span className="rating-chip rating-balanced">{filing.form}</span><h3>{classifySecFiling(filing)}</h3><p>Filing date: {filing.filing_date} · Report date: {filing.report_date ?? "not supplied"}</p>{filing.items && <small>SEC form items: {filing.items}</small>}<small>Accession {filing.accession_number}</small></div>{filing.filing_url && <a className="row-research" href={filing.filing_url} target="_blank" rel="noreferrer">Open source filing <ArrowDownRight size={13}/></a>}</article>)}</div> : !loading && <div className="table-empty">No supported recent 8-K, 10-K, 10-Q, or S-1 filing rows were returned for this issuer.</div>}
+      <p className="table-caption">{data.disclosure}{response?.as_of ? ` Retrieved ${new Date(response.as_of).toLocaleString()}.` : ""}</p>
+      {response?.warnings.map((warning) => <p className="sec-warning" role="status" key={warning}>{warning}</p>)}
+    </>}
+    {!loading && !error && !data && state !== "idle" && <p className="table-empty">No filing response was returned. Financial data is not substituted.</p>}
+  </section>;
+}
+
+function TradingViewResearchAccess({ symbol, kind }: { symbol: string; kind: "news" | "technical" }) {
+  const qualified = tradingViewSymbols[symbol];
+  const url = qualified
+    ? `https://www.tradingview.com/symbols/${qualified.replace(":", "-")}/${kind === "news" ? "news/" : "technicals/"}`
+    : null;
+  const isNews = kind === "news";
+  return <section className="public-unavailable-card research-provider-access">
+    <span className="section-kicker">TRADINGVIEW · PROVIDER-HOSTED RESEARCH</span>
+    <h3>{isNews ? `News for ${symbol}` : `Technical analysis for ${symbol}`}</h3>
+    <p>{isNews
+      ? "Open TradingView’s company-specific news page to read provider-hosted coverage. Jujosmi does not copy headlines, add sentiment labels, or store article content."
+      : "Open TradingView’s company-specific technical analysis page for its provider-hosted summary. Jujosmi does not extract indicators or use them in its own calculations."}</p>
+    {url ? <a className="primary-button research-provider-link" href={url} target="_blank" rel="noopener noreferrer nofollow">Open {isNews ? "company news" : "technical analysis"} at TradingView <ArrowDownRight size={14}/></a>
+      : <p className="table-empty">No exchange-qualified TradingView symbol is configured for {symbol}. Choose a supported ticker in the application selector.</p>}
+    <p className="table-caption">TradingView embeds are not enabled in public Company Research pending written clarification of commercial-use permissions. The provider's terms limit its services to personal/internal display use absent a separate agreement. This link opens TradingView directly and is not a data feed.</p>
+  </section>;
 }
 
 function SecFinancialPanel({ loading, error, report, envelope, mode }: { loading: boolean; error: string; report?: SecCompanyReport; envelope: ApiEnvelope<SecCompanyReport> | null; mode: "Overview" | "Financials" }) {
   if (loading) return <div className="workspace-state" role="status"><span className="loading-ring" /> Loading reported SEC filings and financial facts…</div>;
   if (error) return <section className="public-unavailable-card" role="alert"><span className="section-kicker">SEC DATA UNAVAILABLE</span><h3>Reported company information could not be loaded</h3><p>{error}</p><p>Check the local Python API and its identifying SEC User-Agent configuration. No financial values have been substituted.</p></section>;
   if (!report) return <UnavailablePanel title="SEC company facts unavailable" detail="No response was returned. No financial values have been substituted." />;
-  const factLabels: Record<string, string> = { revenue: "Revenue", net_income: "Net income", operating_income: "Operating income", diluted_eps: "Diluted EPS", assets: "Assets", liabilities: "Liabilities", cash_and_equivalents: "Cash and cash equivalents" };
+  const factLabels: Record<string, string> = { revenue: "Revenue", net_income: "Net income", operating_income: "Operating income", operating_cash_flow: "Operating cash flow", capital_expenditures: "Capital expenditures", diluted_eps: "Diluted EPS", assets: "Total assets", liabilities: "Total liabilities", stockholders_equity: "Stockholders’ equity", cash_and_equivalents: "Cash and cash equivalents", long_term_debt_current: "Current long-term debt", long_term_debt_noncurrent: "Noncurrent long-term debt" };
   const recentFilings = report.filings.filter((filing) => ["10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "40-F", "40-F/A"].includes(filing.form)).slice(0, 12);
   const factsByField = new Map<string, SecCompanyReport["facts"]>();
   report.facts.forEach((fact) => factsByField.set(fact.field, [...(factsByField.get(fact.field) ?? []), fact]));
   return <div className="sec-research-content">
-    <section className="public-unavailable-card sec-source-card"><div className="sec-title-row"><div><span className="section-kicker">{envelope?.status === "partial" || report.status === "partial" ? "PARTIAL SEC REPORT" : "SEC REPORTED DATA"}</span><h3>{mode === "Overview" ? "Company facts & latest filings" : "Reported financial facts"}</h3></div><span className="sec-freshness">{envelope?.freshness === "cached" ? "CACHED" : "LIVE SEC"}</span></div><p>Source: U.S. Securities and Exchange Commission EDGAR · Retrieved {report.as_of ? new Date(report.as_of).toLocaleString() : "time unavailable"} · values are reported as filed, without derived ratios or TTM estimates.</p>{report.warnings.map((warning) => <p className="sec-warning" role="status" key={warning}>{warning}</p>)}</section>
+    <section className="public-unavailable-card sec-source-card"><div className="sec-title-row"><div><span className="section-kicker">{envelope?.status === "partial" || report.status === "partial" ? "PARTIAL SEC REPORT" : "SEC REPORTED DATA"}</span><h3>{mode === "Overview" ? "Company facts & latest filings" : "Financial statements and filing sources"}</h3></div><span className="sec-freshness">{envelope?.freshness === "cached" ? "CACHED" : "LIVE SEC"}</span></div><p>Source: U.S. Securities and Exchange Commission EDGAR · Retrieved {report.as_of ? new Date(report.as_of).toLocaleString() : "time unavailable"} · values are shown as filed; year-over-year comparisons are shown only for matching units, fiscal periods, and comparable durations.</p>{report.warnings.map((warning) => <p className="sec-warning" role="status" key={warning}>{warning}</p>)}</section>
     {mode === "Overview" ? <>
-      <div className="sec-fact-grid">{["revenue", "net_income", "operating_income", "diluted_eps", "assets", "liabilities", "cash_and_equivalents"].map((field) => { const versions = factsByField.get(field) ?? []; const latest = [...versions].filter((fact) => fact.latest_reported_version).sort((a, b) => b.period_end.localeCompare(a.period_end))[0]; return <article className="sec-fact-card" key={field}><span>{factLabels[field]}</span><b>{latest ? `${latest.original_value} ${latest.unit}` : "Not reported / unavailable"}</b><small>{latest ? `${latest.form} · ${latest.period_start ? `${latest.period_start} to ` : "As of "}${latest.period_end} · filed ${latest.filed}` : "No mapped standard SEC fact"}</small>{latest && <small>Taxonomy: {latest.taxonomy} · {latest.tag}</small>}</article>; })}</div>
+      <div className="sec-fact-grid">{["revenue", "net_income", "operating_income", "operating_cash_flow", "diluted_eps", "assets", "liabilities", "stockholders_equity", "cash_and_equivalents"].map((field) => { const versions = factsByField.get(field) ?? []; const latest = [...versions].filter((fact) => fact.latest_reported_version).sort((a, b) => b.period_end.localeCompare(a.period_end))[0]; return <article className="sec-fact-card" key={field}><span>{factLabels[field]}</span><b>{latest ? `${latest.original_value} ${latest.unit}` : "Not reported / unavailable"}</b><small>{latest ? `${latest.form} · ${latest.period_start ? `${latest.period_start} to ` : "As of "}${latest.period_end} · filed ${latest.filed}` : "No mapped standard SEC fact"}</small>{latest && <small>Taxonomy: {latest.taxonomy} · {latest.tag}</small>}</article>; })}</div>
+      <SecResearchSummary report={report} />
       <SecFilings filings={recentFilings} />
     </> : <>
-      <div className="sec-table-scroll" role="region" aria-label="SEC reported financial facts" tabIndex={0}><table className="sec-facts-table"><thead><tr><th scope="col">Reported concept</th><th scope="col">Original value</th><th scope="col">Unit</th><th scope="col">Period</th><th scope="col">Filed</th><th scope="col">Filing</th><th scope="col">Version</th></tr></thead><tbody>{report.facts.map((fact, index) => <tr key={`${fact.field}-${fact.unit}-${fact.period_end}-${fact.accession_number}-${index}`}><th scope="row">{factLabels[fact.field] ?? fact.label}<small>{fact.taxonomy} · {fact.tag}</small></th><td>{fact.original_value}</td><td>{fact.unit}</td><td>{fact.period_start ? `${fact.period_start} – ` : ""}{fact.period_end} · {fact.fiscal_period ?? fact.form}</td><td>{fact.filed}</td><td>{fact.filing_url ? <a href={fact.filing_url} target="_blank" rel="noreferrer">{fact.accession_number}</a> : fact.accession_number}</td><td>{fact.latest_reported_version ? "Latest reported version" : "Earlier reported version"}</td></tr>)}</tbody></table>{report.facts.length === 0 && <p className="table-empty">No mapped standard facts were returned. The SEC does not include company-specific extensions in Company Facts.</p>}</div>
+      <SecFinancialStatements report={report} />
+      <details className="sec-raw-facts"><summary>All mapped reported facts ({report.facts.length})</summary><div className="sec-table-scroll" role="region" aria-label="SEC reported financial facts" tabIndex={0}><table className="sec-facts-table"><thead><tr><th scope="col">Reported concept</th><th scope="col">Original value</th><th scope="col">Unit</th><th scope="col">Period</th><th scope="col">Filed</th><th scope="col">Filing</th><th scope="col">Version</th></tr></thead><tbody>{report.facts.map((fact, index) => <tr key={`${fact.field}-${fact.unit}-${fact.period_end}-${fact.accession_number}-${index}`}><th scope="row">{factLabels[fact.field] ?? fact.label}<small>{fact.taxonomy} · {fact.tag}</small></th><td>{fact.original_value}</td><td>{fact.unit}</td><td>{fact.period_start ? `${fact.period_start} – ` : ""}{fact.period_end} · {fact.fiscal_period ?? fact.form}</td><td>{fact.filed}</td><td>{fact.filing_url ? <a href={fact.filing_url} target="_blank" rel="noreferrer">{fact.accession_number}</a> : fact.accession_number}</td><td>{fact.latest_reported_version ? "Latest reported version" : "Earlier reported version"}</td></tr>)}</tbody></table>{report.facts.length === 0 && <p className="table-empty">No mapped standard facts were returned. The SEC does not include company-specific extensions in Company Facts.</p>}</div></details>
       <SecFilings filings={recentFilings} />
       {report.missing_fields.length > 0 && <p className="table-caption">Not present in the mapped standard taxonomy: {report.missing_fields.map((field) => factLabels[field] ?? field).join(", ")}.</p>}
     </>}
-    <p className="table-caption">Each value retains the SEC taxonomy, unit, fiscal/report period, filed date, accession number, and filing link where provided. Filing revisions are retained as separate records.</p>
+    <p className="table-caption">Each value retains the SEC taxonomy, unit, fiscal/report period, filed date, accession number, and filing link where provided. Filing revisions remain available in the raw facts list; only the latest filed fact for an exact concept, unit, and period feeds statement summaries.</p>
   </div>;
+}
+
+function SecResearchSummary({ report }: { report: SecCompanyReport }) {
+  const metrics = buildSecResearchMetrics(report);
+  const balances = reportableBalanceSheetContext(report);
+  return <section className="sec-derived-summary" aria-label="Transparent SEC-derived research summary">
+    <header><span className="section-kicker">PERIOD-MATCHED SEC COMPARISONS</span><h3>Reported financial trends</h3><p>Deterministic arithmetic from SEC Company Facts. Each card opens its reported inputs and filing provenance.</p></header>
+    {metrics.length ? <div className="sec-derived-grid">{metrics.slice(0, 9).map((item) => <article className="sec-derived-card" key={item.key}><span>{item.label}</span><b>{item.value}</b><small>{item.period}</small><details><summary>Formula & SEC sources</summary><p className="sec-derived-formula">{item.formula}</p><ul>{item.sources.map((source, index) => <li key={`${source.accession_number}-${index}`}><b>{index === 0 ? "Input" : "Comparison input"}:</b> {source.original_value} {source.unit} · {source.form} · {source.period_start ?? "As of"} to {source.period_end} · filed {source.filed} · accession {source.accession_number}{source.filing_url ? <> · <a href={source.filing_url} target="_blank" rel="noreferrer">source filing</a></> : ""}</li>)}</ul></details></article>)}</div> : <p className="table-empty">No derived comparisons could be calculated from the available SEC periods without mixing fiscal periods, durations, or units.</p>}
+    {balances.length > 0 && <div className="sec-balance-context"><h4>Balance-sheet context · as reported</h4>{balances.map(([label, metric]) => <div key={label}><span>{label}</span><b>{metric.original_value} {metric.unit}</b><small>As of {metric.period_end} · {metric.form} · filed {metric.filed} · accession {metric.accession_number}{metric.filing_url ? <> · <a href={metric.filing_url} target="_blank" rel="noreferrer">source</a></> : ""}</small></div>)}</div>}
+  </section>;
 }
 
 function SecFilings({ filings }: { filings: SecCompanyReport["filings"] }) {
@@ -350,7 +446,7 @@ function formatNumber(value: number | null): string { return value === null || !
 function formatMoney(value: number | null | undefined): string { return value === null || value === undefined ? "Unavailable" : `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function formatPercent(value: number | null): string { return value === null ? "Unavailable" : `${(value * 100).toFixed(2)}%`; }
 
-function FixtureWatchlistWorkspace({ selectedSymbol, watchlist, onSelectTicker, onAddTicker, onRemoveTicker, onNavigate, dataMode = "fixtures", persistent = false }: CommonProps & { onAddTicker: (symbol: string) => Promise<boolean>; onRemoveTicker: (symbol: string) => Promise<boolean>; dataMode?: Exclude<DataMode, "public">; persistent?: boolean }) {
+function FixtureWatchlistWorkspace({ selectedSymbol, selectedSecExchange, watchlist, accountEntries = [], accountLoading = false, watchlistError = "", onSelectTicker, onAddTicker, onRemoveTicker, onNavigate, dataMode = "fixtures", persistent = false }: CommonProps & { onAddTicker: (symbol: string, exchange?: string) => Promise<boolean>; onRemoveTicker: (symbol: string, exchange?: string) => Promise<boolean>; dataMode?: Exclude<DataMode, "public">; persistent?: boolean; accountEntries?: AccountWatchlistEntry[]; accountLoading?: boolean; watchlistError?: string }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("Symbol A–Z");
   const [notice, setNotice] = useState("");
@@ -368,42 +464,47 @@ function FixtureWatchlistWorkspace({ selectedSymbol, watchlist, onSelectTicker, 
     return () => controller.abort();
   }, [dataMode, watchlistKey, summaryRetry]);
   const available = tickerFixtures.filter((item) => !watchlist.includes(item.symbol) && `${item.symbol} ${item.name}`.toLowerCase().includes(query.toLowerCase()));
-  const list = [...watchlist].map((symbol) => tickerFor(symbol)).sort((a, b) => sort === "Company name" ? a.name.localeCompare(b.name) : sort === "Daily move" ? moveValue(b.change) - moveValue(a.change) : a.symbol.localeCompare(b.symbol));
-  async function add(symbol: string) { if (!await onAddTicker(symbol)) return; setQuery(""); setNotice(persistent ? symbol + " saved to your account watchlist." : symbol + " added to this browser-session watchlist."); }
+  const list: WatchlistTicker[] = (persistent ? accountEntries : watchlist.map((symbol) => ({ id: "", symbol, exchange: tickerFor(symbol).exchange })))
+    .map((entry) => ({ ...tickerFor(entry.symbol), exchange: entry.exchange || "Unspecified exchange", identityKey: `${entry.symbol}:${entry.exchange}` }))
+    .sort((a, b) => sort === "Company name" ? a.name.localeCompare(b.name) : sort === "Daily move" ? moveValue(b.change) - moveValue(a.change) : a.symbol.localeCompare(b.symbol) || a.exchange.localeCompare(b.exchange));
+  async function add(symbol: string) { const exchange = tickerFor(symbol).exchange; if (!await onAddTicker(symbol, exchange)) return; setQuery(""); setNotice(persistent ? `${symbol} · ${exchange} saved to your account watchlist.` : symbol + " added to this browser-session watchlist."); }
   return <div className="functional-workspace">
     <WorkspaceHeading kicker="YOUR WATCHLIST" title="Keep your research close." description="A locally managed sample list to revisit companies and continue into research." />
     <FixtureBanner>{persistent ? "Your ticker symbols are saved to your signed-in account and protected by database row-level security. Any displayed market or research values remain illustrative or synthetic." : dataMode === "fastapi" ? "The watchlist remains temporary to this browser session. Read-only company summaries come from the Python demo over synthetic inputs; nothing is saved to an account." : "Watchlist state is temporary to this browser session. It is not saved to an account or synced between devices."}</FixtureBanner>
     <div className="watchlist-toolbar"><label className="directory-search"><Search size={16} /><input aria-label="Search tickers to add" placeholder="Find a fixture ticker to add…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>{available.length} available</kbd></label><label className="sort-control">Sort by<select aria-label="Sort watchlist" value={sort} onChange={(event) => setSort(event.target.value)}><option>Symbol A–Z</option><option>Company name</option><option>Daily move</option></select><ChevronDown size={13} /></label></div>
     {query && <div className="ticker-suggestion-list" role="listbox" aria-label="Available fixture tickers">{available.map((item) => <button key={item.symbol} role="option" aria-selected="false" onClick={() => add(item.symbol)}><b>{item.symbol}</b><span>{item.name}</span><span>{item.sector} · illustrative</span><span className="suggest-add">+ Add</span></button>)}{!available.length && <span className="table-empty">No unpinned fixture match.</span>}</div>}
     {notice && <div className="inline-success" role="status"><ShieldCheck size={14} />{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-    <div className="discovery-summary-row watchlist-summary"><div><span className="section-kicker">{persistent ? "SAVED WATCHLIST" : "GUEST WATCHLIST"}</span><h2>{list.length} {list.length === 1 ? "ticker" : "tickers"}</h2></div><span className="session-only-label">{persistent ? <><ShieldCheck size={13} /> Account synced</> : <><Clock3 size={13} /> Browser session only</>}</span></div>
+    {persistent && watchlistError && <div className="workspace-state workspace-error" role="alert"><span>{watchlistError}</span></div>}
+    <div className="discovery-summary-row watchlist-summary"><div><span className="section-kicker">{persistent ? "SAVED WATCHLIST" : "GUEST WATCHLIST"}</span><h2>{list.length} {list.length === 1 ? "ticker" : "tickers"}</h2></div><span className="session-only-label">{persistent ? accountLoading ? "Syncing account" : watchlistError ? "Sync issue" : <><ShieldCheck size={13} /> Account synced</> : <><Clock3 size={13} /> Browser session only</>}</span></div>
     {dataMode === "fastapi" && summaryError && <div className="workspace-state workspace-error" role="alert"><CircleHelp size={18} /><div><b>Python watchlist summaries unavailable</b><span>{summaryError}</span></div><button className="quiet-button" onClick={() => setSummaryRetry((value) => value + 1)}>Retry local request</button></div>}
     {dataMode === "fastapi" && summaryResponse?.status === "partial" && <p className="table-caption" role="status">{summaryResponse.warnings.join(" ")}</p>}
     {dataMode === "fastapi" && summaryResponse?.stale && <p className="table-caption" role="status">Showing the last successful Watchlist summary; it is marked stale.</p>}
-    <SpotlightCard className="data-table-card"><div className="directory-table watchlist-table" role="table" aria-label={persistent ? "Saved account watchlist" : "Session watchlist"}><div className="directory-row directory-head" role="row"><span>COMPANY</span><span>SECTOR</span><span>{dataMode === "fastapi" ? "PYTHON SAMPLE CLOSE" : "SAMPLE CLOSE"}</span><span>DAILY MOVE</span></div>{list.map((item) => <WatchlistItemRow key={item.symbol} item={item} summary={summaryResponse?.data?.summaries.find((row) => row.symbol === item.symbol)} dataMode={dataMode} summaryLoading={!summaryResponse && !summaryError && dataMode === "fastapi"} selected={selectedSymbol === item.symbol} onSelectTicker={onSelectTicker} onResearch={() => { onSelectTicker(item.symbol); onNavigate("research"); }} onRemove={async () => { if (await onRemoveTicker(item.symbol)) setNotice(persistent ? item.symbol + " removed from your account watchlist." : item.symbol + " removed from your session watchlist."); }} />)}{!list.length && <div className="table-empty">Your session list is empty. Search above to add an illustrative ticker.</div>}</div><div className="table-footnote"><span>{dataMode === "fastapi" ? "Python-calculated fields use synthetic inputs only." : "All quote fields are sample values."}</span><span>{persistent ? "Only ticker and exchange identifiers are stored." : "Guest watchlist is temporary in this browser session."}</span></div></SpotlightCard>
+    <SpotlightCard className="data-table-card"><div className="directory-table watchlist-table" role="table" aria-label={persistent ? "Saved account watchlist" : "Session watchlist"}><div className="directory-row directory-head" role="row"><span>COMPANY</span><span>SECTOR</span><span>{dataMode === "fastapi" ? "PYTHON SAMPLE CLOSE" : "SAMPLE CLOSE"}</span><span>DAILY MOVE</span></div>{list.map((item) => <WatchlistItemRow key={item.identityKey} item={item} summary={summaryResponse?.data?.summaries.find((row) => row.symbol === item.symbol)} dataMode={dataMode} summaryLoading={!summaryResponse && !summaryError && dataMode === "fastapi"} selected={selectedSymbol === item.symbol && (selectedSecExchange ?? "").toUpperCase() === item.exchange.toUpperCase()} onSelectTicker={(symbol) => onSelectTicker(symbol, item.exchange)} onResearch={() => { onSelectTicker(item.symbol, item.exchange); onNavigate("research"); }} onRemove={async () => { if (await onRemoveTicker(item.symbol, item.exchange)) setNotice(persistent ? `${item.symbol} · ${item.exchange} removed from your account watchlist.` : item.symbol + " removed from your session watchlist."); }} />)}{!list.length && <div className="table-empty">{persistent ? accountLoading ? "Loading your account watchlist…" : "Your account watchlist is empty." : "Your session list is empty. Search above to add an illustrative ticker."}</div>}</div><div className="table-footnote"><span>{dataMode === "fastapi" ? "Python-calculated fields use synthetic inputs only." : "All quote fields are sample values."}</span><span>{persistent ? "Only ticker and exchange identifiers are stored." : "Guest watchlist is temporary in this browser session."}</span></div></SpotlightCard>
     <div className="workspace-help-note"><Bookmark size={14} /><span>{persistent ? "Your account list syncs through Supabase Auth and owner-scoped database policies." : "Guest selections stay in this browser session and are never uploaded automatically."}</span></div>
   </div>;
 }
 
-export function WatchlistWorkspace(props: CommonProps & { onAddTicker: (symbol: string) => Promise<boolean>; onRemoveTicker: (symbol: string) => Promise<boolean>; dataMode?: DataMode; persistent?: boolean; accountLoading?: boolean }) {
-  return props.dataMode === "public" ? <PublicWatchlistWorkspace {...props} /> : <FixtureWatchlistWorkspace {...props} dataMode={props.dataMode ?? "fixtures"} persistent={props.persistent} />;
+export function WatchlistWorkspace(props: CommonProps & { onAddTicker: (symbol: string, exchange?: string) => Promise<boolean>; onRemoveTicker: (symbol: string, exchange?: string) => Promise<boolean>; dataMode?: DataMode; persistent?: boolean; accountLoading?: boolean; accountEntries?: AccountWatchlistEntry[]; watchlistError?: string }) {
+  return props.dataMode === "public" ? <PublicWatchlistWorkspace {...props} /> : <FixtureWatchlistWorkspace {...props} dataMode={props.dataMode ?? "fixtures"} persistent={props.persistent} accountLoading={props.accountLoading} accountEntries={props.accountEntries} watchlistError={props.watchlistError} />;
 }
 
-function PublicWatchlistWorkspace({ selectedSymbol, watchlist, onSelectTicker, onAddTicker, onRemoveTicker, onNavigate, persistent = false }: CommonProps & { onAddTicker: (symbol: string) => Promise<boolean>; onRemoveTicker: (symbol: string) => Promise<boolean>; persistent?: boolean }) {
+function PublicWatchlistWorkspace({ selectedSymbol, watchlist, accountEntries = [], accountLoading = false, watchlistError = "", onSelectTicker, onAddTicker, onRemoveTicker, onNavigate, persistent = false }: CommonProps & { onAddTicker: (symbol: string, exchange?: string) => Promise<boolean>; onRemoveTicker: (symbol: string, exchange?: string) => Promise<boolean>; persistent?: boolean; accountEntries?: AccountWatchlistEntry[]; accountLoading?: boolean; watchlistError?: string }) {
   const [query, setQuery] = useState("");
   const suggestions = tradingViewTickerSymbols.filter((symbol) => !watchlist.includes(symbol) && symbol.includes(query.trim().toUpperCase()));
+  const savedEntries = persistent ? accountEntries : watchlist.map((symbol) => ({ id: "", symbol, exchange: "" }));
   return <div className="functional-workspace">
     <WorkspaceHeading kicker="YOUR WATCHLIST" title="Keep your research close." description={persistent ? "Manage the symbols saved to your account." : "Manage a temporary list of exchange-qualified chart symbols in this browser session."} badge={persistent ? "ACCOUNT WATCHLIST" : "PUBLIC VIEW · GUEST SESSION"} />
     <div className="public-data-note"><ShieldCheck size={16} /><span>{persistent ? "Only ticker and exchange identifiers are stored in your account. Company names, quotes, sector data, and ratings are not provided in public mode." : "Guest symbols stay temporary in this browser session. Company names, quotes, sector data, and ratings are not provided in public mode."}</span></div>
+    {persistent && watchlistError && <div className="workspace-state workspace-error" role="alert">{watchlistError}</div>}
     <div className="watchlist-toolbar"><label className="directory-search"><Search size={16} /><input aria-label="Search tickers to add" placeholder="Find a supported ticker…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>{suggestions.length} available</kbd></label></div>
-    {query && <div className="ticker-suggestion-list" role="listbox" aria-label="Exchange-qualified chart tickers">{suggestions.map((symbol) => <button key={symbol} role="option" aria-selected="false" onClick={async () => { if (await onAddTicker(symbol)) setQuery(""); }}><b>{symbol}</b><span>{symbol}</span><span>TradingView chart symbol</span><span className="suggest-add">+ Add</span></button>)}{!suggestions.length && <span className="table-empty">No available configured symbol matches.</span>}</div>}
-    <div className="discovery-summary-row watchlist-summary"><div><span className="section-kicker">{persistent ? "ACCOUNT WATCHLIST" : "GUEST WATCHLIST"}</span><h2>{watchlist.length} {watchlist.length === 1 ? "ticker" : "tickers"}</h2></div><span className="session-only-label">{persistent ? <><ShieldCheck size={13} /> Account synced</> : <><Clock3 size={13} /> Browser session only</>}</span></div>
-    <SpotlightCard className="public-watchlist-card"><div className="public-watchlist-list">{watchlist.map((symbol) => <div className="public-watchlist-row" key={symbol}><button className="directory-company" onClick={() => onSelectTicker(symbol)} aria-current={selectedSymbol === symbol ? "true" : undefined}><span className="directory-avatar">{symbol.slice(0, 1)}</span><span><b>{symbol}</b><small>Exchange-qualified chart symbol</small></span></button><span className="unavailable-field">Quote and company research unavailable</span><div><button className="row-research" onClick={() => { onSelectTicker(symbol); onNavigate("research"); }}>Research <ArrowDownRight size={13} /></button><button className="remove-ticker" onClick={() => void onRemoveTicker(symbol)} aria-label={"Remove " + symbol + " from watchlist"}>Remove</button></div></div>)}{!watchlist.length && <div className="table-empty">Your session watchlist is empty.</div>}</div></SpotlightCard>
+    {query && <div className="ticker-suggestion-list" role="listbox" aria-label="Exchange-qualified chart tickers">{suggestions.map((symbol) => { const exchange = symbol.includes("JPM") || symbol.includes("LLY") ? "NYSE" : "NASDAQ"; return <button key={symbol} role="option" aria-selected="false" onClick={async () => { if (await onAddTicker(symbol, exchange)) setQuery(""); }}><b>{symbol}</b><span>{symbol}</span><span>{exchange} · TradingView chart symbol</span><span className="suggest-add">+ Add</span></button>; })}{!suggestions.length && <span className="table-empty">No available configured symbol matches.</span>}</div>}
+    <div className="discovery-summary-row watchlist-summary"><div><span className="section-kicker">{persistent ? "ACCOUNT WATCHLIST" : "GUEST WATCHLIST"}</span><h2>{savedEntries.length} {savedEntries.length === 1 ? "ticker" : "tickers"}</h2></div><span className="session-only-label">{persistent ? accountLoading ? "Syncing account" : watchlistError ? "Sync issue" : <><ShieldCheck size={13} /> Account synced</> : <><Clock3 size={13} /> Browser session only</>}</span></div>
+    <SpotlightCard className="public-watchlist-card"><div className="public-watchlist-list">{savedEntries.map(({ id, symbol, exchange }) => <div className="public-watchlist-row" key={`${id || symbol}:${exchange}`}><button className="directory-company" onClick={() => onSelectTicker(symbol, exchange || undefined)} aria-current={selectedSymbol === symbol ? "true" : undefined}><span className="directory-avatar">{symbol.slice(0, 1)}</span><span><b>{symbol}</b><small>{exchange || "Exchange unspecified"}</small></span></button><span className="unavailable-field">Quote and company research unavailable</span><div><button className="row-research" onClick={() => { onSelectTicker(symbol, exchange || undefined); onNavigate("research"); }}>Research <ArrowDownRight size={13} /></button><button className="remove-ticker" onClick={() => void onRemoveTicker(symbol, exchange || undefined)} aria-label={`Remove ${symbol} ${exchange} from watchlist`}>Remove</button></div></div>)}{!savedEntries.length && <div className="table-empty">{persistent ? accountLoading ? "Loading your account watchlist…" : "Your account watchlist is empty." : "Your session watchlist is empty."}</div>}</div></SpotlightCard>
   </div>;
 }
 
 function WatchlistItemRow({ item, summary, dataMode, summaryLoading, selected, onSelectTicker, onResearch, onRemove }: {
-  item: ReturnType<typeof tickerFor>;
+  item: WatchlistTicker;
   summary?: WatchlistSummaryData["summaries"][number];
   dataMode: "fixtures" | "fastapi";
   summaryLoading: boolean;
@@ -418,8 +519,8 @@ function WatchlistItemRow({ item, summary, dataMode, summaryLoading, selected, o
   const close = dataMode === "fastapi" ? summary?.sample_close === null || summary?.sample_close === undefined ? summaryLoading ? "Loading…" : "Unavailable" : `$${summary.sample_close.toFixed(2)}` : `$${item.price}`;
   const change = dataMode === "fastapi" ? summary?.sample_change_percent === null || summary?.sample_change_percent === undefined ? summaryLoading ? "Loading…" : "Unavailable" : `${summary.sample_change_percent >= 0 ? "+" : ""}${summary.sample_change_percent.toFixed(2)}%` : item.change;
   const tone = dataMode === "fastapi" ? summary?.sample_change_percent !== undefined && summary.sample_change_percent !== null && summary.sample_change_percent >= 0 ? "tone-up" : "tone-down" : item.changeTone === "up" ? "tone-up" : "tone-down";
-  return <div className={`directory-row ${selected ? "directory-row-selected" : ""}`} role="row" key={item.symbol}>
-    <button className="directory-company" onClick={() => onSelectTicker(item.symbol)}><span className="directory-avatar">{item.symbol.slice(0, 1)}</span><span><b>{item.symbol}</b><small>{companyName}</small></span></button>
+  return <div className={`directory-row ${selected ? "directory-row-selected" : ""}`} role="row">
+    <button className="directory-company" onClick={() => onSelectTicker(item.symbol)}><span className="directory-avatar">{item.symbol.slice(0, 1)}</span><span><b>{item.symbol}</b><small>{companyName} · {item.exchange}</small></span></button>
     <span className="directory-industry"><b>{sector}</b><small>{industry}</small></span>
     <span className="directory-cap">{close}<small>{dataMode === "fastapi" ? "Python sample result" : "illustrative close"}</small></span>
     <span className={`watch-change ${tone}`}>{change}</span>
@@ -428,8 +529,8 @@ function WatchlistItemRow({ item, summary, dataMode, summaryLoading, selected, o
         {dataMode === "fastapi" ? summary ? <><div className="expandable-fact-grid"><div><span>Python sample close</span><b>{close}</b></div><div><span>Python sample move</span><b>{change}</b></div><div><span>Technical rating</span><b>{summary.technical_rating}</b></div><div><span>Trend context</span><b>{summary.trend_state}</b></div><div><span>Sector · industry fixture identity</span><b>{sector} · {industry}</b></div></div><p className="table-caption">{summaryResponseDisclosure(summary)}</p></> : <p>{summaryLoading ? "Waiting for the local Python API summary." : "The Python summary is unavailable; no frontend quote fallback is shown."}</p> : <div className="expandable-fact-grid"><div><span>Sample price</span><b>${item.price}</b></div><div><span>Sample move</span><b>{item.change}</b></div><div><span>Industry</span><b>{item.industry}</b></div><div><span>Sample strength</span><b>{item.strength} / 100</b></div></div>}
         <button type="button" className="outline-button expandable-action" onClick={onResearch}>Open Company Research <ArrowDownRight size={14} /></button>
       </ExpandableResearchCard>
-      <button className="row-research" aria-label={`Research ${item.symbol}`} onClick={onResearch}>Research <ArrowDownRight size={13} /></button>
-      <button className="remove-ticker" onClick={onRemove} aria-label={`Remove ${item.symbol} from watchlist`}>Remove</button>
+      <button className="row-research" aria-label={`Research ${item.symbol} ${item.exchange}`} onClick={onResearch}>Research <ArrowDownRight size={13} /></button>
+      <button className="remove-ticker" onClick={onRemove} aria-label={`Remove ${item.symbol} from ${item.exchange} watchlist entry`}>Remove</button>
     </div>
   </div>;
 }

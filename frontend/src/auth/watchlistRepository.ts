@@ -48,13 +48,19 @@ export function createWatchlistRepository(client: SupabaseClient<Database>, owne
     },
 
     async importSymbols(symbols: string[], exchangeBySymbol: Record<string, string | null | undefined> = {}): Promise<void> {
-      const seen = new Set<string>();
+      const unique = new Map<string, { user_id: string; symbol: string; exchange: string }>();
       for (const raw of symbols) {
         const symbol = normalizeTicker(raw);
-        if (seen.has(symbol)) continue;
-        seen.add(symbol);
-        await this.add(symbol, exchangeBySymbol[symbol]);
+        const exchange = normalizeExchange(exchangeBySymbol[symbol]);
+        unique.set(`${symbol}\u0000${exchange}`, { user_id: ownerId, symbol, exchange });
       }
+      const entries = [...unique.values()];
+      if (!entries.length) return;
+      const { error } = await client.from("watchlist_items").upsert(entries, {
+        onConflict: "user_id,symbol,exchange",
+        ignoreDuplicates: true,
+      });
+      if (error) throw safeDatabaseError();
     },
   };
 }

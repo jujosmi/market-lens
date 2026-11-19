@@ -1,19 +1,11 @@
 # Source Hash Comparison
 
-Source-backed frontend and backend application files were compared against the authoritative development trees using SHA-256. Export-only historical documentation and safe deployment configuration retain their original provenance; the manifest records those separately.
+All included frontend and backend files were compared with the authoritative project trees using SHA-256.
 
-- React source matches: 
-54
- files
-- Backend source matches: 
-33
- files
-- Source mismatches: 
-0
-- Export package files: 
-105
-- Manifest entries: 
-104
-; the manifest does not hash itself.
+- Frontend source files: 69; mismatches: 0.
+- Backend source files: 35; mismatches: 0.
+- Sanitized omissions: build output, package installs, virtual environments, caches, bytecode, runtime logs, actual local environment files, and the root historical P2A report copy.
+- The historical P2A report remains preserved under docs/history.
+- Export-only reports, prior sprint documentation, launch scripts, and package docs are marked EXPORT_ONLY in EXPORT_HASH_MANIFEST.csv.
 
-`docs/EXPORT_HASH_MANIFEST.csv` records each file path, source or documentation origin, source hash where applicable, exported-file hash, and comparison status.
+The deterministic release ID and complete inventory are in docs/P4E_RELEASE_MANIFEST.json; the JSON manifest is not included in its own hash list.

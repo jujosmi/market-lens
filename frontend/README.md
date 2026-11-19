@@ -7,18 +7,24 @@ This is a standalone React/TypeScript prototype. It does not import, replace, or
 Requires Node.js 20.19+ (or a compatible newer LTS) and npm.
 
 ```powershell
-cd "C:\Users\mores\Desktop\jujosmi\misc projects\jujosmi-trade-ui2-prototype"
-npm install
+# Run from the frontend project directory.
+npm ci
 npm run dev
 ```
 
-Open the Vite localhost URL (normally `http://127.0.0.1:5173/`). The default `Public chart` mode displays the TradingView embed on Market Overview; it requires a browser internet connection. `/welcome` is the optional landing page; `/`, `/market-overview`, `/discovery`, `/research`, and `/watchlist` remain direct terminal routes. In the terminal header, `Offline fixtures (dev)` enables explicitly simulated React fixtures, while `FastAPI demo (synthetic)` uses the sibling local service for synthetic responses. Public Discovery remains unavailable because no verified public directory is connected. Public Company Research shows SEC-reported facts only when the local FastAPI service has an identifying SEC User-Agent configured; otherwise the panel explains that SEC data is unavailable. Guests keep a temporary session watchlist; authenticated users can synchronize symbols to their own Supabase account after an approved project is configured and the RLS migration is applied.
+Open the Vite localhost URL (normally `http://127.0.0.1:5173/`). Local development displays the TradingView embed by default; a production build hides it unless `VITE_TRADINGVIEW_WIDGET_ENABLED=true` is explicitly set after licensing review. `/welcome` is the optional landing page; `/`, `/market-overview`, `/discovery`, `/research`, and `/watchlist` remain direct terminal routes. In the terminal header, `Offline fixtures (dev)` enables explicitly simulated React fixtures, while `FastAPI demo (synthetic)` uses the sibling local service for synthetic responses. Public Discovery remains unavailable because no verified public directory is connected. Public Company Research shows SEC-reported facts only when the backend has an identifying SEC User-Agent configured; otherwise the panel explains that SEC data is unavailable. Guests keep a temporary session watchlist; authenticated users can synchronize symbols only after the account gate, project, and RLS migration are separately approved and verified.
 
 ## Supabase development configuration
 
-Account functionality is optional and never gates public research. To connect an explicitly approved disposable/development project, copy `.env.example` to `.env.local`, fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from that project, and restart Vite. The browser client rejects recognized service-role/secret keys; never place such keys in any `VITE_` variable. `.env.local` is ignored by Git. The client uses PKCE email magic links, session persistence and refresh through Supabase Auth. The redirect is the exact current app origin, which must be added explicitly to Supabase Auth's redirect URL allowlist. Do not use wildcard redirect URLs.
+Account functionality is disabled unless `VITE_SUPABASE_AUTH_ENABLED=true`. To connect an explicitly approved disposable/development project, copy `.env.example` to `.env.local`, fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from that project, set the gate to `true`, and restart Vite. `VITE_SUPABASE_PUBLIC_SIGNUP` must remain `false`; public account creation is not approved. The browser client rejects recognized service-role/secret keys; never place such keys in any `VITE_` variable. `.env.local` is ignored by Git. The client uses PKCE email magic links, session persistence and refresh through Supabase Auth. The redirect is the exact current app origin, which must be explicitly approved in the intended Supabase project before enabling sign-in. Do not use wildcard redirect URLs. Public-release builds keep this gate off until live authentication and RLS controls are verified.
 
-Before enabling saved watchlists, review and apply `supabase/migrations/202611150001_watchlist_items.sql` only to the intended development database. It enables RLS, revokes anonymous table privileges, grants the required authenticated operations, and enforces `auth.uid() = user_id` for each operation. The migration is not applied by the app. The frontend must use only the publishable key; database service-role credentials are never required by normal watchlist operations. See the P4A report for unverified hosted-project prerequisites and the manual two-user RLS test steps.
+## Production build configuration
+
+Production builds have no localhost API fallback. Set `VITE_TRADE_API_BASE_URL` to the owner-confirmed backend API base (including `/api/v1`) before building; if it is blank, API-backed research reports a clear unavailable state and sends no request. `.env.production.example` keeps account access and the TradingView widget disabled. The widget is off by default in production and should remain off until the exact public display use is cleared. To create the static bundle, run `npm ci`, `npm test`, and `npm run build`; output is written to `dist/`. `VITE_` values are compiled into public browser code and must never contain secrets.
+
+The callback verifies the one-time `token_hash` query parameter at the app root (`/`) through Supabase `verifyOtp`. The Supabase Magic Link email template must therefore link to `{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email`; the default template may instead return a `code` callback and will not match this handler. Configure this template only after reviewing it in the intended development project. PKCE's verifier is stored by the browser client, so the link must be opened in the same browser profile where sign-in was requested. Sign-in success is shown only after Supabase returns an authenticated session.
+
+Before enabling saved watchlists, review and apply `supabase/migrations/202611150001_watchlist_items.sql` only to the intended development database. It enables RLS, revokes anonymous table privileges, grants the required authenticated operations, and enforces `auth.uid() = user_id` for each operation. The migration is not applied by the app. The frontend must use only the publishable key; database service-role credentials are never required by normal watchlist operations. Do not treat static SQL assertions or mocked two-user client tests as RLS verification; complete the two-user real-PostgreSQL steps in the P4B security report before enabling accounts.
 
 To review viewport presets, open `/responsive-review.html`. The local harness provides 390×844, 768×1024, and 1280×900 app frames. Its narrow Discovery and Watchlist tables remain dense and may require horizontal scrolling.
 
@@ -27,7 +33,7 @@ To review viewport presets, open `/responsive-review.html`. The local harness pr
 Use a separate PowerShell terminal. The Python service runs independently from the React dev server. To create the backend environment on this workstation, where `py -3.14` is not registered, use the installed interpreter path:
 
 ```powershell
-cd "C:\Users\mores\Desktop\jujosmi\misc projects\jujosmi-trade-ui2-backend"
+# Run from the backend project directory.
 $pythonExe = Join-Path $env:LOCALAPPDATA "Programs\Python\Python314\python.exe"
 & $pythonExe -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -113,4 +119,5 @@ The isolated adapter calls the source-snapshot functions in `analytics.py`, `res
 Sprint P2B localhost browser checks exercised FastAPI mode, engine-backed Market Overview, Discovery sector/industry selection and NVDA research navigation, Company Research fundamentals, analyst, news and technical tabs, plus session Watchlist. All four workspaces were checked at 390×844, 768×1024, and 1280×900; the document did not overflow horizontally. Dense Discovery/Watchlist tables retain internal horizontal scrolling. Theme behavior was not checked because this prototype has no theme switch. Application source contains no `MutationObserver` reference; the reported development-only browser-console error could not be confirmed from the browser adapter's console-log surface.
 
 The prototype has an optional Supabase Auth/watchlist foundation but no connected hosted project, live authentication, or independently verified RLS deployment. It has no provider integration for market data, real filings/news beyond the bounded SEC adapter, verified market quotes, trading capability, or full operational/data-source parity with Streamlit. Calendar dates and IPO examples are purely synthetic. Market summary, interval-expanded chart bars, and Watchlist summaries use explicit local fixtures rather than a production data feed. Provider access, storage, Streamlit cache policy, and Streamlit session state remain intentionally unintegrated.
+
 

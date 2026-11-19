@@ -20,12 +20,15 @@ function mockRlsClient(authenticatedUserId: string) {
             error: null,
           });
         },
-        upsert(input: Omit<WatchlistItemRow, "id" | "created_at" | "updated_at">) {
-          if (input.user_id !== authenticatedUserId) return Promise.resolve({ error: { message: "row policy violation" } });
-          const duplicate = rows.some((row) => row.user_id === authenticatedUserId && row.symbol === input.symbol && row.exchange === input.exchange);
-          if (!duplicate) {
-            const now = new Date().toISOString();
-            rows.push({ ...input, id: authenticatedUserId + "-" + input.symbol + "-" + input.exchange, created_at: now, updated_at: now });
+        upsert(input: Omit<WatchlistItemRow, "id" | "created_at" | "updated_at"> | Omit<WatchlistItemRow, "id" | "created_at" | "updated_at">[]) {
+          const entries = Array.isArray(input) ? input : [input];
+          if (entries.some((entry) => entry.user_id !== authenticatedUserId)) return Promise.resolve({ error: { message: "row policy violation" } });
+          for (const entry of entries) {
+            const duplicate = rows.some((row) => row.user_id === authenticatedUserId && row.symbol === entry.symbol && row.exchange === entry.exchange);
+            if (!duplicate) {
+              const now = new Date().toISOString();
+              rows.push({ ...entry, id: authenticatedUserId + "-" + entry.symbol + "-" + entry.exchange, created_at: now, updated_at: now });
+            }
           }
           return Promise.resolve({ error: null });
         },
@@ -57,6 +60,18 @@ describe("authenticated watchlist client scoping (offline RLS model)", () => {
     expect(normalizeExchange("nyse")).toBe("NYSE");
     expect(() => normalizeTicker("bad symbol")).toThrow("valid symbol");
     expect(() => normalizeExchange("a venue with spaces")).toThrow("exchange identifier");
+  });
+
+  it("treats exchange-qualified listings as separate identities and imports without replacing account rows", async () => {
+    const repository = createWatchlistRepository(mockRlsClient("user-a"), "user-a");
+    await repository.add("AAPL", "NASDAQ");
+    await repository.add("AAPL", "NYSE");
+    await repository.importSymbols(["MSFT", "MSFT", "AAPL"], { MSFT: "NASDAQ", AAPL: "NASDAQ" });
+    expect(await repository.list()).toMatchObject([
+      { symbol: "AAPL", exchange: "NASDAQ" },
+      { symbol: "AAPL", exchange: "NYSE" },
+      { symbol: "MSFT", exchange: "NASDAQ" },
+    ]);
   });
 
   it("isolates two mock identities and rejects attempts to write for another owner", async () => {

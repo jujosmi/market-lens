@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   test: {
     environment: "jsdom",
-    environmentOptions: { jsdom: { url: "http://localhost/" } },
+    environmentOptions: { jsdom: { url: "http://localhost:5173/" } },
     setupFiles: ["./src/test-setup.ts"],
     css: true,
   },

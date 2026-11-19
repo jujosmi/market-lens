@@ -21,7 +21,7 @@ export function LandingPage({ onEnter }: { onEnter: () => void }) {
       className="landing-foreground"
     >
       <motion.div className="landing-content" initial={reduced ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reduced ? 0 : 0.38, ease: "easeOut" }}>
-        <div className="landing-brand-mark"><img src="/jujosmi-logo.png" alt="Jujosmi" /></div>
+        <a className="landing-brand-mark" href="https://jujosmi.com" aria-label="Visit Jujosmi.com"><img src="/jujosmi-logo-simple-shadow.png" alt="" /></a>
         <span className="landing-eyebrow"><i /> PROFESSIONAL INTELLIGENCE, SIMPLIFIED</span>
         <h1>Jujosmi <span>Trade</span></h1>
         <p className="landing-subtitle">Market Intelligence. Refined.</p>

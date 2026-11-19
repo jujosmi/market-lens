@@ -44,6 +44,7 @@ class Gateway:
                 "form": ["8-K", "10-Q", "S-1", "4"],
                 "filingDate": ["2026-11-03", "2026-10-30", "2026-10-25", "2026-10-20"],
                 "reportDate": ["2026-10-31", "2026-09-27", "", "2026-09-30"],
+                "items": ["2.02, 9.01", "", "", ""],
                 "primaryDocument": ["current.htm", "quarter.htm", "registration.htm", "form4.xml"],
             }}
         }
@@ -76,6 +77,7 @@ def test_recent_filings_include_only_requested_actual_forms_and_sec_provenance()
     assert data.sic == "3571" and data.sic_description == "Electronic Computers"
     assert data.filings[0].filing_date == "2026-11-03"
     assert data.filings[0].report_date == "2026-10-31"
+    assert data.filings[0].items == "2.02, 9.01"
     assert data.filings[0].accession_number == "0000320193-26-000003"
     assert data.filings[0].filing_url == "https://www.sec.gov/Archives/edgar/data/320193/000032019326000003/current.htm"
     assert data.filings[2].report_date is None and warnings == []
@@ -152,6 +154,7 @@ def test_discovery_filings_endpoint_preserves_filing_metadata(monkeypatch):
     assert body["freshness"]=="cached" and body["provenance"]=="Official SEC EDGAR issuer submissions"
     assert body["data"]["sic_description"]=="Electronic Computers"
     assert body["data"]["filings"][0]["form"]=="8-K"
+    assert body["data"]["filings"][0]["items"]=="2.02, 9.01"
 
 
 def test_discovery_endpoints_fail_safely_when_sec_user_agent_is_not_configured(monkeypatch):

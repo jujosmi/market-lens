@@ -93,7 +93,7 @@ The engine snapshot comparison is standalone by default. For comparison with the
 ## Limitations and release blockers
 
 - Hosted Supabase Auth, email delivery, session refresh, and real PostgreSQL RLS are not verified; the SQL is a prepared migration only.
-- The SEC identifying contact has not been configured in this development environment, so the live SEC acceptance remains pending. Never claim live AAPL/NVDA facts or populated SEC screenshots without an authorized bounded verification.
+- A bounded local SEC acceptance verified live AAPL Company Facts, submissions, and a 10-K source link on 2026-11-18. The export contains no SEC contact value; configure `SEC_EDGAR_USER_AGENT` in the backend process environment before SEC research will work. This verification does not establish public display/redistribution rights or production readiness.
 - TradingView commercial-use authorization for the intended public product remains outstanding. Embedding the widget is not an authorization to redistribute its data.
 - No Yahoo Finance or Alpaca integration, no trading/order execution, no persistent watchlist API in FastAPI, and no production hosting setup are included.
 - Public product launch is blocked until data-use rights, live SEC behavior, account/RLS security, and hosting are reviewed independently.

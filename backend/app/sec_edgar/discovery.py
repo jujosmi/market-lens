@@ -85,7 +85,7 @@ class SecDiscoveryService:
         required = ("accessionNumber", "form", "filingDate")
         if any(not isinstance(recent.get(field), list) for field in required):
             raise SecMappingError("SEC recent filings response has an unsupported shape.")
-        columns = {key: recent.get(key) for key in (*required, "reportDate", "primaryDocument")}
+        columns = {key: recent.get(key) for key in (*required, "reportDate", "primaryDocument", "items")}
         row_count = min(len(columns[key]) for key in required)
         activities: list[SecFilingActivity] = []
         warnings: list[str] = []
@@ -117,12 +117,16 @@ class SecDiscoveryService:
             primary = columns["primaryDocument"][index] if isinstance(columns["primaryDocument"], list) and index < len(columns["primaryDocument"]) else None
             if not isinstance(primary, str):
                 primary = None
+            items_value = columns["items"][index] if isinstance(columns["items"], list) and index < len(columns["items"]) else None
+            # SEC submissions expose 8-K item identifiers as a comma-separated
+            # string. Preserve the provider value; never infer it from a title.
+            items = items_value.strip() if isinstance(items_value, str) and items_value.strip() else None
             activities.append(SecFilingActivity(
                 cik=identity.cik, ticker=identity.ticker, company_name=identity.name,
                 exchange=identity.exchange, sic=sic, sic_description=sic_description, form=form,
                 filing_date=filed_date.isoformat(), report_date=report_date,
                 accession_number=accession, primary_document=primary,
-                filing_url=sec_filing_url(identity.cik, accession, primary),
+                filing_url=sec_filing_url(identity.cik, accession, primary), items=items,
             ))
         activities.sort(key=lambda item: (item.filing_date, item.accession_number), reverse=True)
         data = SecFilingsData(

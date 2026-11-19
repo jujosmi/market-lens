@@ -99,6 +99,21 @@ describe("typed local API client", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/companies/EXM/sec-research?exchange=NYSE");
   });
 
+  it("validates annual and quarterly statement periods without dropping provenance", async () => {
+    const metric = { field: "revenue", taxonomy: "us-gaap", tag: "Revenues", label: "Revenue", value: 100, original_value: "100", unit: "USD", currency: "USD", period_start: "2025-01-01", period_end: "2025-12-31", duration_days: 365, form: "10-K", filed: "2026-02-01", accession_number: "0000000001-26-000001", filing_url: "https://www.sec.gov/Archives/edgar/data/1/000000000126000001/a.htm", comparison_percent: null, comparison_period_end: null };
+    const period = { fiscal_year: 2025, fiscal_period: "FY", period_type: "annual", period_start: "2025-01-01", period_end: "2025-12-31", metrics: { revenue: [metric] } };
+    const data = { identity: { cik: "0000000001", ticker: "EXM", name: "Example Holdings", exchange: null, identity_source: "sec_company_tickers" }, facts: [], annual_periods: [period], quarterly_periods: [], ytd_periods: [], filings: [], missing_fields: [], source: "SEC EDGAR", live_data: true, status: "ok", as_of: "2026-11-18T12:00:00Z", warnings: [] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data, status: "ok", source: "sec-edgar", freshness: "live", warnings: [], missing_fields: [] }), { status: 200 })));
+    const report = await fetchSecResearch("EXM");
+    expect(report.data?.annual_periods?.[0]?.metrics.revenue?.[0]).toMatchObject({ original_value: "100", unit: "USD", tag: "Revenues" });
+  });
+
+  it("rejects financial statement rows with missing SEC filing provenance", async () => {
+    const data = { identity: { cik: "0000000001", ticker: "EXM", name: "Example Holdings", exchange: null, identity_source: "sec_company_tickers" }, facts: [], annual_periods: [{ fiscal_year: 2025, fiscal_period: "FY", period_type: "annual", period_end: "2025-12-31", metrics: { revenue: [{ original_value: "100", unit: "USD", tag: "Revenues", form: "10-K", filed: "2026-02-01", period_end: "2025-12-31", filing_url: null }] } }], quarterly_periods: [], ytd_periods: [], filings: [], missing_fields: [], source: "SEC EDGAR", live_data: true, status: "ok", as_of: "2026-11-18T12:00:00Z", warnings: [] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data, status: "ok", source: "sec-edgar", freshness: "live", warnings: [], missing_fields: [] }), { status: 200 })));
+    await expect(fetchSecResearch("EXM")).rejects.toMatchObject({ message: "The local API data did not match the expected response shape.", status: "failed" });
+  });
+
   it("preserves Watchlist symbols and validates Python summary fields", async () => {
     const payload = { data: { symbols: ["NVDA"], summaries: [{ symbol: "NVDA", name: "NVIDIA Corporation", sector: "Technology", industry: "Semiconductors", sample_close: 142.68, sample_change_percent: 1.4, technical_rating: "Hold", trend_state: "Mixed" }], disclosure: "Synthetic only." }, status: "ok", source: "python-engine-snapshot", freshness: "simulated", missing_fields: [], warnings: [] };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));

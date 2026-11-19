@@ -139,6 +139,7 @@ class SecFilingActivity(StrictModel):
     accession_number: str
     primary_document: str | None = None
     filing_url: str | None = None
+    items: str | None = None
 
 
 class SecFilingsData(StrictModel):

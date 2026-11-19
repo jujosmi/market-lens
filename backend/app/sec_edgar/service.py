@@ -70,8 +70,8 @@ class SecCompanyResearchService:
         return report.model_copy(update={
             "source": "SEC EDGAR submissions and Company Facts" if self._live_data_verified else "SEC EDGAR-shaped response via injected gateway (not live-verified)",
             "live_data": self._live_data_verified,
-            "status": "partial" if report.missing_fields or not report.facts or not report.filings else "ok",
+            "status": "partial" if report.missing_fields or report.warnings or not report.facts or not report.filings else "ok",
             "freshness": "cached" if getattr(self._gateway, "report_cached", False) else "live",
             "as_of": datetime.now(timezone.utc).isoformat(),
-            "warnings": (["One or more standard XBRL fields are not reported or are not present in the selected taxonomy."] if report.missing_fields else []),
+            "warnings": ((["One or more standard XBRL fields are not reported or are not present in the selected taxonomy."] if report.missing_fields else []) + report.warnings),
         })

@@ -1,3 +1,5 @@
+import { resolveApiBaseUrl } from "../releaseFeatures";
+
 export type ApiStatus = "ok" | "partial" | "unavailable" | "rate_limited" | "failed" | "invalid";
 export type ApiEnvelope<T> = {
   data: T | null;
@@ -60,8 +62,23 @@ export type NewsEventsData = {
 export type SecCompanyReport = {
   identity: { cik: string; ticker: string; name: string; exchange: string | null; identity_source: "sec_company_tickers" | "approved_fixture" };
   facts: { field: string; taxonomy: string; tag: string; label: string; value: number; original_value: string; unit: string; currency: string | null; period_start: string | null; period_end: string; fiscal_year: number | null; fiscal_period: string | null; form: string; filed: string; accession_number: string; filing_url: string | null; latest_reported_version: boolean }[];
+  annual_periods?: SecStatementPeriod[];
+  quarterly_periods?: SecStatementPeriod[];
+  ytd_periods?: SecStatementPeriod[];
   filings: { cik: string; accession_number: string; form: string; filing_date: string; report_period: string | null; primary_document: string | null; filing_url: string | null }[];
   missing_fields: string[]; source: string; live_data: boolean; status: "ok" | "partial"; as_of: string | null; warnings: string[];
+};
+export type SecStatementMetric = {
+  field: string; taxonomy: string; tag: string; label: string; value: number; original_value: string;
+  unit: string; currency: string | null; period_start: string | null; period_end: string;
+  duration_days: number | null; form: string; filed: string; accession_number: string;
+  filing_url: string | null; comparison_percent: number | null; comparison_period_end: string | null;
+  comparison_value?: string | null; comparison_filed?: string | null; comparison_form?: string | null;
+  comparison_accession_number?: string | null; comparison_filing_url?: string | null;
+};
+export type SecStatementPeriod = {
+  fiscal_year: number | null; fiscal_period: string | null; period_type: "annual" | "quarterly" | "ytd";
+  period_start: string | null; period_end: string; metrics: Record<string, SecStatementMetric[]>;
 };
 export type SecDirectoryCompany = { ticker: string; name: string; cik: string; exchange: string | null };
 export type SecDirectoryData = {
@@ -71,7 +88,7 @@ export type SecDirectoryData = {
 export type SecFilingActivity = {
   cik: string; ticker: string; company_name: string; exchange: string | null; sic: string | null;
   sic_description: string | null; form: string; filing_date: string; report_date: string | null;
-  accession_number: string; primary_document: string | null; filing_url: string | null;
+  accession_number: string; primary_document: string | null; filing_url: string | null; items: string | null;
 };
 export type SecFilingsData = {
   ticker: string; company_name: string; cik: string; exchange: string | null; sic: string | null;
@@ -85,7 +102,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-const baseUrl = (import.meta.env.VITE_TRADE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
+const baseUrl = resolveApiBaseUrl();
 const requestTimeoutMs = 5_000;
 const secRequestTimeoutMs = 30_000;
 
@@ -131,6 +148,9 @@ async function requestData<T>(path: string, signal: AbortSignal | undefined, val
   const forwardAbort = () => timeout.abort();
   signal?.addEventListener("abort", forwardAbort, { once: true });
   try {
+    if (!baseUrl) {
+      throw new ApiRequestError("Company Research is unavailable because the API address is not configured for this release.", "unavailable", 503);
+    }
     const response = await fetch(`${baseUrl}${path}`, { method: "GET", headers: { Accept: "application/json" }, signal: timeout.signal });
     let payload: unknown;
     try { payload = await response.json(); } catch { throw new ApiRequestError("The local API returned an unreadable response.", "failed", response.status); }
@@ -145,9 +165,13 @@ async function requestData<T>(path: string, signal: AbortSignal | undefined, val
     if (error instanceof ApiRequestError) throw error;
     if (timeout.signal.aborted) {
       if (signal?.aborted) throw new DOMException("The request was cancelled.", "AbortError");
-      throw new ApiRequestError("The local API timed out. Confirm that the demo service is running.", "failed");
+      throw new ApiRequestError(import.meta.env.DEV
+        ? "The local API timed out. Confirm that the demo service is running."
+        : "The application API timed out. Try again later.", "failed");
     }
-    throw new ApiRequestError("The local API could not be reached. Confirm that it is running on localhost.", "failed");
+    throw new ApiRequestError(import.meta.env.DEV
+      ? "The local API could not be reached. Confirm that it is running on localhost."
+      : "The application API could not be reached. Try again later.", "failed");
   } finally {
     window.clearTimeout(timeoutId);
     signal?.removeEventListener("abort", forwardAbort);
@@ -204,9 +228,35 @@ function isSecCompanyReport(value: unknown): value is SecCompanyReport {
       && typeof fact.value === "number" && Number.isFinite(fact.value) && typeof fact.latest_reported_version === "boolean"
       && (fact.filing_url === null || typeof fact.filing_url === "string"))
     && Array.isArray(value.filings) && value.filings.every((filing) => isRecord(filing) && ["cik", "accession_number", "form", "filing_date"].every((key) => typeof filing[key] === "string"))
+    && ["annual_periods", "quarterly_periods", "ytd_periods"].every((key) => value[key] === undefined || (Array.isArray(value[key]) && value[key].every(isSecStatementPeriod)))
     && Array.isArray(value.missing_fields) && value.missing_fields.every((field) => typeof field === "string")
     && (value.status === "ok" || value.status === "partial") && value.live_data === true
     && Array.isArray(value.warnings) && value.warnings.every((warning) => typeof warning === "string");
+}
+function isSecStatementPeriod(value: unknown): value is SecStatementPeriod {
+  if (!isRecord(value) || !["annual", "quarterly", "ytd"].includes(String(value.period_type))
+      || typeof value.period_end !== "string" || !isRecord(value.metrics)
+      || !(value.fiscal_year === null || typeof value.fiscal_year === "number")
+      || !(value.fiscal_period === null || typeof value.fiscal_period === "string")
+      || !(value.period_start === null || typeof value.period_start === "string")) return false;
+  return Object.entries(value.metrics).every(([field, metricRows]) => typeof field === "string" && Array.isArray(metricRows)
+    && metricRows.every((metric) => isRecord(metric) && typeof metric.field === "string"
+      && typeof metric.taxonomy === "string" && typeof metric.label === "string"
+      && typeof metric.value === "number" && Number.isFinite(metric.value)
+      && typeof metric.original_value === "string" && typeof metric.unit === "string"
+      && (metric.currency === null || typeof metric.currency === "string")
+      && (metric.period_start === null || typeof metric.period_start === "string")
+      && (metric.duration_days === null || typeof metric.duration_days === "number")
+      && typeof metric.tag === "string" && typeof metric.form === "string"
+      && typeof metric.filed === "string" && typeof metric.accession_number === "string"
+      && typeof metric.period_end === "string" && (metric.filing_url === null || typeof metric.filing_url === "string")
+      && (metric.comparison_percent === null || (typeof metric.comparison_percent === "number" && Number.isFinite(metric.comparison_percent)))
+      && (metric.comparison_period_end === null || typeof metric.comparison_period_end === "string")
+      && (metric.comparison_value === undefined || metric.comparison_value === null || typeof metric.comparison_value === "string")
+      && (metric.comparison_filed === undefined || metric.comparison_filed === null || typeof metric.comparison_filed === "string")
+      && (metric.comparison_form === undefined || metric.comparison_form === null || typeof metric.comparison_form === "string")
+      && (metric.comparison_accession_number === undefined || metric.comparison_accession_number === null || typeof metric.comparison_accession_number === "string")
+      && (metric.comparison_filing_url === undefined || metric.comparison_filing_url === null || typeof metric.comparison_filing_url === "string")));
 }
 function isSecDirectoryData(value: unknown): value is SecDirectoryData {
   return isRecord(value) && Array.isArray(value.companies)
@@ -226,7 +276,8 @@ function isSecFilingsData(value: unknown): value is SecFilingsData {
     && Array.isArray(value.forms) && value.forms.every((form) => typeof form === "string")
     && Array.isArray(value.filings) && value.filings.every((filing) => isRecord(filing)
       && ["cik", "ticker", "company_name", "form", "filing_date", "accession_number"].every((key) => typeof filing[key] === "string")
-      && ["exchange", "sic", "sic_description", "report_date", "primary_document", "filing_url"].every((key) => filing[key] === null || typeof filing[key] === "string"))
+      && ["exchange", "sic", "sic_description", "report_date", "primary_document", "filing_url"].every((key) => filing[key] === null || typeof filing[key] === "string")
+      && (filing.items === undefined || filing.items === null || typeof filing.items === "string"))
     && typeof value.disclosure === "string";
 }
 
@@ -289,3 +340,4 @@ export function fetchWatchlistSummaries(symbols: string[], signal?: AbortSignal)
   const query = encodeURIComponent(symbols.join(","));
   return requestData(`/watchlist/summaries?symbols=${query}`, signal, isWatchlistSummaryData);
 }
+
