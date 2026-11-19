@@ -3,6 +3,7 @@ type ReleaseEnvironment = {
   VITE_SUPABASE_AUTH_ENABLED?: string;
   VITE_TRADINGVIEW_WIDGET_ENABLED?: string;
   VITE_TRADE_API_BASE_URL?: string;
+  VITE_KESTREL_PREVIEW_ENABLED?: string;
 };
 
 const environment = import.meta.env as ImportMetaEnv & ReleaseEnvironment;
@@ -23,4 +24,10 @@ export function resolveApiBaseUrl(env: ReleaseEnvironment = environment): string
   const configured = env.VITE_TRADE_API_BASE_URL?.trim();
   if (configured) return configured.replace(/\/+$/, "");
   return env.DEV === true ? "http://127.0.0.1:8000/api/v1" : "";
+}
+
+
+/** Private synthetic preview: development builds only, with explicit opt-in. */
+export function isKestrelPreviewEnabled(env: ReleaseEnvironment = environment): boolean {
+  return env.DEV === true && env.VITE_KESTREL_PREVIEW_ENABLED === "true";
 }

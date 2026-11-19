@@ -341,3 +341,114 @@ export function fetchWatchlistSummaries(symbols: string[], signal?: AbortSignal)
   return requestData(`/watchlist/summaries?symbols=${query}`, signal, isWatchlistSummaryData);
 }
 
+
+export type KestrelResearchPreview = {
+  preview_contract_id: "JUJOSMI_TRADE_KESTREL_LOCAL_PREVIEW_V1";
+  status: "accepted";
+  source_mode: "synthetic_offline_only";
+  freshness: "stale" | "historical_synthetic";
+  stale: boolean;
+  current_market_data: false;
+  age_hours: number;
+  retrieved_at_utc: string;
+  bundle: {
+    record: {
+      bridge_contract_id: "KESTREL_TRADE_RESEARCH_BRIDGE_V1";
+      schema_version: 1;
+      record_type: "descriptive_research";
+      producer_id: "KESTREL_M9_13_OPERATIONAL_SPY_RESEARCH";
+      source_mode: "synthetic_offline_only";
+      scenario_id: string;
+      instrument: { instrument_id: string; symbol: "SPY" };
+      observation_timing: { observation_timestamp_utc: string; availability_timestamp_utc: string; served_at_utc: string };
+      research_status: { outcome: string; completeness_status: string; classification_type: string; classification: string };
+      m913_quality_notes: string[];
+      source_provenance: Record<string, Record<string, unknown>>;
+      research_response: {
+        contract_id: "KESTREL_RESEARCH_API_V1";
+        schema_version: 1;
+        outcome: string;
+        request: Record<string, unknown>;
+        data_use: Record<string, unknown>;
+        research_record: {
+          completeness_status: string;
+          unified_descriptive_classification: string;
+          classification_type: string;
+          daily_context: Record<string, unknown>;
+          intraday_context: Record<string, unknown>;
+          data_quality_flags: string[];
+          abstention_reasons: string[];
+          research_use_restrictions: string[];
+        };
+      };
+    };
+    manifest: { schema_version: 1; m95_schema_sha256: string; m97_schema_sha256: string; record_sha256: string; manifest_sha256: string };
+  };
+};
+
+const kestrelM95SchemaHash = "4d7b99d4e0e7e601b3729bee5da51e5da8d2c0f29a9f454c356b51639a48d32e";
+const kestrelM97SchemaHash = "33ad7e58151dde43470ff7b272820dd8c9b4b75d554911e250abcb4c9f54c11f";
+
+export function isKestrelResearchPreview(value: unknown): value is KestrelResearchPreview {
+  if (!isRecord(value) || value.preview_contract_id !== "JUJOSMI_TRADE_KESTREL_LOCAL_PREVIEW_V1"
+    || value.status !== "accepted" || value.source_mode !== "synthetic_offline_only"
+    || !["stale", "historical_synthetic"].includes(String(value.freshness))
+    || typeof value.stale !== "boolean" || value.current_market_data !== false
+    || typeof value.age_hours !== "number" || !Number.isFinite(value.age_hours)
+    || typeof value.retrieved_at_utc !== "string" || !Number.isFinite(Date.parse(value.retrieved_at_utc))
+    || !isRecord(value.bundle) || !isRecord(value.bundle.record) || !isRecord(value.bundle.manifest)) return false;
+  const record = value.bundle.record;
+  const manifest = value.bundle.manifest;
+  if (record.bridge_contract_id !== "KESTREL_TRADE_RESEARCH_BRIDGE_V1" || record.schema_version !== 1
+    || record.record_type !== "descriptive_research" || record.producer_id !== "KESTREL_M9_13_OPERATIONAL_SPY_RESEARCH"
+    || record.source_mode !== "synthetic_offline_only" || !["complete", "missing_intraday_segment"].includes(String(record.scenario_id))
+    || !isRecord(record.instrument) || record.instrument.symbol !== "SPY" || record.instrument.instrument_id !== "JLC:US_ETF:SPY"
+    || !isRecord(record.observation_timing) || typeof record.observation_timing.observation_timestamp_utc !== "string"
+    || !isRecord(record.research_status) || typeof record.research_status.classification !== "string"
+    || !Array.isArray(record.m913_quality_notes) || !record.m913_quality_notes.every((item) => typeof item === "string")
+    || !isRecord(record.research_response) || record.research_response.contract_id !== "KESTREL_RESEARCH_API_V1"
+    || record.research_response.schema_version !== 1 || !isRecord(record.research_response.research_record)
+    || !isRecord(record.research_response.data_use) || record.research_response.data_use.public_display_authorized !== false
+    || !isRecord(record.source_provenance) || !isRecord(record.source_provenance.daily) || !isRecord(record.source_provenance.intraday)
+    || ![record.source_provenance.daily.source_provider, record.source_provenance.intraday.source_provider].every((item) => typeof item === "string" && item.startsWith("synthetic_"))) return false;
+  const research = record.research_response.research_record;
+  if (typeof research.completeness_status !== "string" || typeof research.unified_descriptive_classification !== "string"
+    || research.classification_type !== "descriptive_technical_state" || !isRecord(research.daily_context)
+    || !isRecord(research.intraday_context) || !Array.isArray(research.data_quality_flags)
+    || !research.data_quality_flags.every((item) => typeof item === "string") || !Array.isArray(research.abstention_reasons)
+    || !research.abstention_reasons.every((item) => typeof item === "string") || !Array.isArray(research.research_use_restrictions)
+    || !research.research_use_restrictions.every((item) => typeof item === "string")) return false;
+  return manifest.schema_version === 1 && manifest.m95_schema_sha256 === kestrelM95SchemaHash
+    && manifest.m97_schema_sha256 === kestrelM97SchemaHash
+    && typeof manifest.record_sha256 === "string" && /^[0-9a-f]{64}$/.test(manifest.record_sha256)
+    && typeof manifest.manifest_sha256 === "string" && /^[0-9a-f]{64}$/.test(manifest.manifest_sha256);
+}
+
+export async function fetchKestrelResearchPreview(signal?: AbortSignal): Promise<KestrelResearchPreview> {
+  if (!baseUrl) throw new ApiRequestError("The local Kestrel research preview is unavailable.", "unavailable", 503);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), requestTimeoutMs);
+  const forwardAbort = () => controller.abort();
+  signal?.addEventListener("abort", forwardAbort, { once: true });
+  try {
+    const response = await fetch(baseUrl + "/dev/kestrel/research", {
+      method: "GET", headers: { Accept: "application/json" }, signal: controller.signal,
+    });
+    let payload: unknown;
+    try { payload = await response.json(); }
+    catch { throw new ApiRequestError("The local Kestrel preview returned an unreadable response.", "failed", response.status); }
+    if (!response.ok) throw new ApiRequestError("The local Kestrel development preview is unavailable.", "unavailable", response.status);
+    if (!isKestrelResearchPreview(payload)) throw new ApiRequestError("The local Kestrel response did not match the preview contract.", "failed", response.status);
+    return payload;
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    if (controller.signal.aborted) {
+      if (signal?.aborted) throw new DOMException("The request was cancelled.", "AbortError");
+      throw new ApiRequestError("The local Kestrel preview timed out.", "failed");
+    }
+    throw new ApiRequestError("The local Kestrel preview could not be reached.", "unavailable");
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+}

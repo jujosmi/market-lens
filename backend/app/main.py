@@ -21,6 +21,7 @@ from .contracts import (
     ResearchData, SecDirectoryData, SecFilingsData, TechnicalAnalysis, TickerSearchData, WatchlistSummary, WatchlistSummaryData,
 )
 from .providers import SyntheticOfflineProvider
+from app.integrations.kestrel.router import router as kestrel_research_router
 from .providers.cache import CachePolicy, ProviderCache
 from .providers.contracts import ProviderResult
 from .sec_edgar.client import SecAccessBlocked, SecClientError, SecConfigurationError, SecEdgarHttpClient, SecEdgarSettings, SecRateLimited
@@ -160,6 +161,7 @@ async def lifespan(_app):
 
 app = FastAPI(title="Jujosmi Trade UI 2.0 Demo API", version="0.1.0", docs_url="/docs", redoc_url=None, lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
+app.include_router(kestrel_research_router, prefix=API_PREFIX)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins(),
