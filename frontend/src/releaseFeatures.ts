@@ -2,6 +2,7 @@ type ReleaseEnvironment = {
   DEV?: boolean;
   VITE_SUPABASE_AUTH_ENABLED?: string;
   VITE_TRADINGVIEW_WIDGET_ENABLED?: string;
+  VITE_TRADINGVIEW_RESEARCH_WIDGETS_ENABLED?: string;
   VITE_TRADE_API_BASE_URL?: string;
   VITE_KESTREL_PREVIEW_ENABLED?: string;
 };
@@ -16,6 +17,13 @@ export function isAccountAuthEnabled(env: ReleaseEnvironment = environment): boo
 export function isTradingViewWidgetEnabled(env: ReleaseEnvironment = environment): boolean {
   if (env.VITE_TRADINGVIEW_WIDGET_ENABLED === "true") return true;
   if (env.VITE_TRADINGVIEW_WIDGET_ENABLED === "false") return false;
+  return env.DEV === true;
+}
+
+/** Research embeds stay off in releases unless their intended use is approved explicitly. */
+export function isTradingViewResearchWidgetsEnabled(env: ReleaseEnvironment = environment): boolean {
+  if (env.VITE_TRADINGVIEW_RESEARCH_WIDGETS_ENABLED === "true") return true;
+  if (env.VITE_TRADINGVIEW_RESEARCH_WIDGETS_ENABLED === "false") return false;
   return env.DEV === true;
 }
 

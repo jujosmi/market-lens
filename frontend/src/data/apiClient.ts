@@ -85,15 +85,29 @@ export type SecDirectoryData = {
   companies: SecDirectoryCompany[]; total: number; limit: number; offset: number; query: string;
   exchange: string | null; available_exchanges: string[]; disclosure: string;
 };
+export type SecIndustryCompany = SecDirectoryCompany & { sic: string; sic_description: string; sic_sector: string };
+export type SecIndustryData = {
+  companies: SecIndustryCompany[]; total_matches: number; total_candidates: number; limit: number; offset: number;
+  query: string; exchange: string | null; available_exchanges: string[];
+  classified_count: number; unclassified_count: number; disclosure: string;
+};
 export type SecFilingActivity = {
   cik: string; ticker: string; company_name: string; exchange: string | null; sic: string | null;
   sic_description: string | null; form: string; filing_date: string; report_date: string | null;
   accession_number: string; primary_document: string | null; filing_url: string | null; items: string | null;
+  acceptance_datetime?: string | null; primary_doc_description?: string | null;
 };
 export type SecFilingsData = {
   ticker: string; company_name: string; cik: string; exchange: string | null; sic: string | null;
   sic_description: string | null; filings: SecFilingActivity[]; forms: string[]; disclosure: string;
 };
+export type SecWatchlistActivityCompany = { ticker: string; exchange: string | null };
+export type SecWatchlistActivityEntry = {
+  requested_ticker: string; requested_exchange: string | null;
+  status: "ok" | "partial" | "unavailable" | "rate_limited" | "failed";
+  data: SecFilingsData | null; error: string | null; warnings: string[];
+};
+export type SecWatchlistActivityData = { entries: SecWatchlistActivityEntry[]; limit: number; disclosure: string };
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly status: ApiStatus = "failed", readonly httpStatus?: number) {
@@ -142,7 +156,7 @@ function isDiscoveryData(value: unknown): value is DiscoveryData {
     && typeof value.query === "string" && typeof value.disclosure === "string";
 }
 
-async function requestData<T>(path: string, signal: AbortSignal | undefined, validate: (value: unknown) => value is T, timeoutMs = requestTimeoutMs): Promise<ApiEnvelope<T>> {
+async function requestData<T>(path: string, signal: AbortSignal | undefined, validate: (value: unknown) => value is T, timeoutMs = requestTimeoutMs, requestInit?: RequestInit): Promise<ApiEnvelope<T>> {
   const timeout = new AbortController();
   const timeoutId = window.setTimeout(() => timeout.abort(), timeoutMs);
   const forwardAbort = () => timeout.abort();
@@ -151,7 +165,9 @@ async function requestData<T>(path: string, signal: AbortSignal | undefined, val
     if (!baseUrl) {
       throw new ApiRequestError("Company Research is unavailable because the API address is not configured for this release.", "unavailable", 503);
     }
-    const response = await fetch(`${baseUrl}${path}`, { method: "GET", headers: { Accept: "application/json" }, signal: timeout.signal });
+    const headers = new Headers(requestInit?.headers);
+    headers.set("Accept", "application/json");
+    const response = await fetch(`${baseUrl}${path}`, { ...requestInit, method: requestInit?.method ?? "GET", headers, signal: timeout.signal });
     let payload: unknown;
     try { payload = await response.json(); } catch { throw new ApiRequestError("The local API returned an unreadable response.", "failed", response.status); }
     if (!isEnvelope(payload)) throw new ApiRequestError("The local API response did not match the expected contract.", "failed", response.status);
@@ -270,6 +286,21 @@ function isSecDirectoryData(value: unknown): value is SecDirectoryData {
     && Array.isArray(value.available_exchanges) && value.available_exchanges.every((item) => typeof item === "string")
     && typeof value.disclosure === "string";
 }
+function isSecIndustryData(value: unknown): value is SecIndustryData {
+  return isRecord(value) && Array.isArray(value.companies)
+    && value.companies.every((company) => isRecord(company)
+      && typeof company.ticker === "string" && typeof company.name === "string"
+      && typeof company.cik === "string" && (company.exchange === null || typeof company.exchange === "string")
+      && typeof company.sic === "string" && typeof company.sic_description === "string" && typeof company.sic_sector === "string")
+    && typeof value.total_matches === "number" && Number.isInteger(value.total_matches) && value.total_matches >= 0
+    && typeof value.total_candidates === "number" && Number.isInteger(value.total_candidates) && value.total_candidates >= 0
+    && typeof value.limit === "number" && Number.isInteger(value.limit) && value.limit >= 1 && value.limit <= 10
+    && typeof value.offset === "number" && Number.isInteger(value.offset) && value.offset >= 0
+    && typeof value.query === "string" && (value.exchange === null || typeof value.exchange === "string")
+    && Array.isArray(value.available_exchanges) && value.available_exchanges.every((item) => typeof item === "string")
+    && typeof value.classified_count === "number" && typeof value.unclassified_count === "number"
+    && typeof value.disclosure === "string";
+}
 function isSecFilingsData(value: unknown): value is SecFilingsData {
   return isRecord(value) && ["ticker", "company_name", "cik"].every((key) => typeof value[key] === "string")
     && ["exchange", "sic", "sic_description"].every((key) => value[key] === null || typeof value[key] === "string")
@@ -277,8 +308,23 @@ function isSecFilingsData(value: unknown): value is SecFilingsData {
     && Array.isArray(value.filings) && value.filings.every((filing) => isRecord(filing)
       && ["cik", "ticker", "company_name", "form", "filing_date", "accession_number"].every((key) => typeof filing[key] === "string")
       && ["exchange", "sic", "sic_description", "report_date", "primary_document", "filing_url"].every((key) => filing[key] === null || typeof filing[key] === "string")
-      && (filing.items === undefined || filing.items === null || typeof filing.items === "string"))
+      && (filing.items === undefined || filing.items === null || typeof filing.items === "string")
+      && (filing.acceptance_datetime === undefined || filing.acceptance_datetime === null || typeof filing.acceptance_datetime === "string")
+      && (filing.primary_doc_description === undefined || filing.primary_doc_description === null || typeof filing.primary_doc_description === "string"))
     && typeof value.disclosure === "string";
+}
+function isSecWatchlistActivityData(value: unknown): value is SecWatchlistActivityData {
+  return isRecord(value) && value.limit === 5 && typeof value.disclosure === "string"
+    && Array.isArray(value.entries) && value.entries.every((entry) => {
+      if (!isRecord(entry)
+          || typeof entry.requested_ticker !== "string"
+          || !(entry.requested_exchange === null || typeof entry.requested_exchange === "string")
+          || !["ok", "partial", "unavailable", "rate_limited", "failed"].includes(String(entry.status))
+          || !(entry.error === null || typeof entry.error === "string")
+          || !Array.isArray(entry.warnings) || !entry.warnings.every((warning) => typeof warning === "string")
+          || !(entry.data === null || isSecFilingsData(entry.data))) return false;
+      return entry.data === null || entry.data.ticker.toUpperCase() === entry.requested_ticker.toUpperCase();
+    });
 }
 
 export function fetchOverview(signal?: AbortSignal) {
@@ -316,11 +362,34 @@ export function fetchSecDirectory(filters: { query?: string; exchange?: string; 
   return requestData(`/discovery/companies?${params.toString()}`, signal, isSecDirectoryData, secRequestTimeoutMs);
 }
 
+export function fetchSecIndustryCompanies(filters: { query: string; exchange?: string; limit?: number; offset?: number }, signal?: AbortSignal) {
+  const params = new URLSearchParams({ q: filters.query, limit: String(filters.limit ?? 10), offset: String(filters.offset ?? 0) });
+  if (filters.exchange) params.set("exchange", filters.exchange);
+  return requestData(`/discovery/industry-companies?${params.toString()}`, signal, isSecIndustryData, secRequestTimeoutMs);
+}
+
 export function fetchSecFilings(symbol: string, exchange?: string, signal?: AbortSignal) {
   const params = new URLSearchParams();
   if (exchange) params.set("exchange", exchange);
   const suffix = params.size ? `?${params.toString()}` : "";
   return requestData(`/discovery/filings/${encodeURIComponent(symbol)}${suffix}`, signal, isSecFilingsData, secRequestTimeoutMs);
+}
+
+export function fetchSecWatchlistActivity(companies: readonly SecWatchlistActivityCompany[], signal?: AbortSignal) {
+  if (companies.length < 1 || companies.length > 5) {
+    return Promise.reject(new ApiRequestError("SEC watchlist checks must include one to five companies.", "invalid"));
+  }
+  return requestData(
+    "/discovery/filings/watchlist",
+    signal,
+    isSecWatchlistActivityData,
+    secRequestTimeoutMs,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companies }),
+    },
+  );
 }
 
 export function fetchDiscovery(filters: { sector?: string; industry?: string; query?: string }, signal?: AbortSignal) {
