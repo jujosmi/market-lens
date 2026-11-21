@@ -46,6 +46,12 @@ Health check: `http://127.0.0.1:8000/health`. OpenAPI docs: `http://127.0.0.1:80
 
 After both environments are installed, the parent `misc projects` folder includes `start-jujosmi-trade-demo.ps1` and `stop-jujosmi-trade-demo.ps1` to launch and stop just the local API/Vite processes. The launcher binds both services to loopback and keeps logs under `%TEMP%\jujosmi-trade-ui2`. It does not expose a network interface or add machine-wide environment settings.
 
+## Public provider-widget controls
+
+The Market Overview TradingView Advanced Chart remains controlled by `VITE_TRADINGVIEW_WIDGET_ENABLED`; it is off in release examples and only appears in a production build when explicitly set to `true`. The Company Research News Feed and Technical Analysis widgets have their own `VITE_TRADINGVIEW_RESEARCH_WIDGETS_ENABLED` gate. Both release values are `false` by default. The gate must remain off until the owner has confirmed in writing that TradingView's terms permit the intended public/commercial use. TradingView's current terms restrict commercial use absent separate agreement, while its widget product page describes free widgets with default attribution. The local React implementation uses the official Web Components and does not read their content. If permitted and explicitly enabled, widgets show exchange-qualified symbols, preserve provider branding/links, and offer provider-page fallbacks when the module fails or content is blocked. A successfully loaded module does not prove that the provider's internal content has rendered; browser/network inspection is required for visual acceptance.
+
+Jujosmi News sentiment, technical ratings, and analyst consensus are separate from provider widgets. They display unavailable states until the required authorized inputs are connected. The preserved Python algorithms are not run on TradingView widget output or synthetic public data. Discovery's earnings and IPO tabs link to TradingView's provider-hosted calendars; they do not display native schedule rows because no authorized zero-cost event feed has been validated.
+
 Run verification from each package directory:
 
 ```powershell

@@ -36,9 +36,10 @@ class Gateway:
 
     def get_submissions(self, cik):
         self.submissions_calls.append(cik)
-        name = "Example Holdings" if cik == "0001000001" else "Apple Inc."
+        name = {"0001000001": "Example Holdings", "0001000002": "Example Holdings Class B", "0000789019": "Microsoft Corporation"}.get(cik, "Apple Inc.")
+        sic = {"0000320193": "3571", "0000789019": "7372", "0001000001": None, "0001000002": "9999"}.get(cik, "3571")
         return {
-            "cik": int(cik), "name": name, "sic": "3571", "sicDescription": "Electronic Computers",
+            "cik": int(cik), "name": name, "sic": sic, "sicDescription": "Electronic Computers" if sic == "3571" else ("Services-Computer Programming Services" if sic == "7372" else None),
             "filings": {"recent": {
                 "accessionNumber": ["0000320193-26-000003", "0000320193-26-000002", "0000320193-26-000001", "0000320193-26-000000"],
                 "form": ["8-K", "10-Q", "S-1", "4"],
@@ -68,6 +69,68 @@ def test_directory_does_not_invent_sector_or_financial_metrics():
     row=data.companies[0].model_dump()
     assert set(row) == {"ticker", "name", "cik", "exchange"}
     assert "GICS" in data.disclosure
+
+
+def test_sic_division_groups_are_explicit_and_unknown_codes_are_unclassified():
+    from app.sec_edgar.sic_classification import sic_sector
+    assert sic_sector("3571") == "Manufacturing"
+    assert sic_sector("7372") == "Services"
+    assert sic_sector("9999") is None
+    assert sic_sector("bad") is None
+
+
+def test_industry_browser_uses_only_verified_search_matches_and_preserves_original_sic():
+    gateway = Gateway()
+    data, warnings = SecDiscoveryService(gateway).industry_companies(query="apple")
+    assert data.total_matches == 1 and data.total_candidates == 1
+    assert data.classified_count == 1 and data.unclassified_count == 0
+    row = data.companies[0]
+    assert (row.ticker, row.cik, row.exchange, row.sic, row.sic_description, row.sic_sector) == (
+        "AAPL", "0000320193", "Nasdaq", "3571", "Electronic Computers", "Manufacturing")
+    assert "not GICS" in data.disclosure and warnings == []
+    assert gateway.submissions_calls == ["0000320193"]
+
+
+def test_industry_browser_excludes_unknown_or_unmapped_sic_without_guessing():
+    data, _ = SecDiscoveryService(Gateway()).industry_companies(query="example")
+    assert data.total_candidates == 2
+    assert data.companies == []
+    assert data.unclassified_count == 2
+
+
+def test_industry_browser_requires_search_and_caps_provider_enrichment():
+    gateway = Gateway()
+    service = SecDiscoveryService(gateway)
+    with pytest.raises(SecMappingError, match="two letters"):
+        service.industry_companies(query=" ")
+    with pytest.raises(SecMappingError, match="limited to ten"):
+        service.industry_companies(query="apple", limit=11)
+    assert gateway.submissions_calls == []
+
+
+def test_industry_browser_rejects_submissions_cik_mismatch():
+    gateway = Gateway()
+    gateway.get_submissions = lambda _cik: {"cik": 123, "sic": "3571", "sicDescription": "Electronic Computers"}
+    data, warnings = SecDiscoveryService(gateway).industry_companies(query="apple")
+    assert data.companies == [] and data.unclassified_count == 1
+    assert any("CIK did not match" in warning for warning in warnings)
+
+
+def test_industry_browser_preserves_partial_results_and_stops_after_provider_failure():
+    from app.sec_edgar.client import SecClientError
+    gateway = Gateway()
+    calls = []
+    def submissions(cik):
+        calls.append(cik)
+        if len(calls) == 2:
+            raise SecClientError("provider unavailable")
+        return {"cik": int(cik), "sic": "3571", "sicDescription": "Electronic Computers"}
+    gateway.get_submissions = submissions
+    data, warnings = SecDiscoveryService(gateway).industry_companies(query="example")
+    assert len(calls) == 2
+    assert len(data.companies) == 1 and data.classified_count == 1
+    assert data.unclassified_count == 1
+    assert warnings and "available verified results" in warnings[0]
 
 
 def test_recent_filings_include_only_requested_actual_forms_and_sec_provenance():
@@ -139,6 +202,26 @@ def test_discovery_directory_endpoint_uses_sec_envelope_and_bounded_parameters(m
     assert "not a complete" in body["data"]["disclosure"]
     invalid=TestClient(app).get("/api/v1/discovery/companies?limit=500")
     assert invalid.status_code==422
+
+
+def test_industry_browser_endpoint_returns_bounded_sec_sic_contract(monkeypatch):
+    from app import main
+    gateway = Gateway()
+    class CacheMarker:
+        report_cached = False
+        def begin_report(self): pass
+    monkeypatch.setattr(main, "_get_sec_client", lambda: CacheMarker())
+    monkeypatch.setattr(main, "_sec_discovery_service", SecDiscoveryService(gateway))
+    client = TestClient(app)
+    response = client.get("/api/v1/discovery/industry-companies?q=Apple&limit=10")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "sec-edgar" and body["provenance"].startswith("Official SEC")
+    assert body["data"]["companies"][0]["sic_sector"] == "Manufacturing"
+    assert body["data"]["companies"][0]["sic_description"] == "Electronic Computers"
+    assert body["data"]["total_matches"] == 1 and body["data"]["classified_count"] == 1
+    assert client.get("/api/v1/discovery/industry-companies?q=A&limit=10").status_code == 422
+    assert client.get("/api/v1/discovery/industry-companies?q=Apple&limit=11").status_code == 422
 
 
 def test_discovery_filings_endpoint_preserves_filing_metadata(monkeypatch):

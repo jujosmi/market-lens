@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, fetchChart, fetchDiscovery, fetchDiscoveryCalendar, fetchOverview, fetchSecDirectory, fetchSecFilings, fetchSecResearch, fetchWatchlistSummaries } from "./apiClient";
+import { ApiRequestError, fetchChart, fetchDiscovery, fetchDiscoveryCalendar, fetchOverview, fetchSecDirectory, fetchSecFilings, fetchSecIndustryCompanies, fetchSecResearch, fetchWatchlistSummaries } from "./apiClient";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
@@ -42,6 +42,18 @@ describe("typed local API client", () => {
     expect(requested.searchParams.get("sector")).toBe("Technology");
     expect(requested.searchParams.get("industry")).toBe("Semiconductors");
     expect(requested.searchParams.get("q")).toBe("NV");
+  });
+
+  it("validates the limited SEC SIC browser contract and encodes its query", async () => {
+    const payload = { data: { companies: [{ ticker: "AAPL", name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq", sic: "3571", sic_description: "Electronic Computers", sic_sector: "Manufacturing" }], total_matches: 1, total_candidates: 1, limit: 10, offset: 0, query: "Apple & Co", exchange: null, available_exchanges: ["Nasdaq"], classified_count: 1, unclassified_count: 0, disclosure: "Partial SEC SIC coverage." }, status: "ok", source: "sec-edgar", freshness: "cached", warnings: [] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await fetchSecIndustryCompanies({ query: "Apple & Co", limit: 10, offset: 0 });
+    expect(response.data?.companies[0]?.sic_sector).toBe("Manufacturing");
+    const requested = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requested.pathname).toContain("/discovery/industry-companies");
+    expect(requested.searchParams.get("q")).toBe("Apple & Co");
+    expect(requested.searchParams.get("limit")).toBe("10");
   });
 
   it("reports API unavailable separately from malformed input and failed requests", async () => {

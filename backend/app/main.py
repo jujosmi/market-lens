@@ -18,7 +18,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .contracts import (
     ApiEnvelope, ChartData, DiscoveryCalendarData, DiscoveryData, NewsEventsData, OverviewData,
-    ResearchData, SecDirectoryData, SecFilingsData, TechnicalAnalysis, TickerSearchData, WatchlistSummary, WatchlistSummaryData,
+    ResearchData, SecDirectoryData, SecFilingsData, SecIndustryData, SecWatchlistActivityData, SecWatchlistActivityRequest,
+    SecWatchlistActivityEntry, TechnicalAnalysis, TickerSearchData, WatchlistSummary, WatchlistSummaryData,
 )
 from .providers import SyntheticOfflineProvider
 from app.integrations.kestrel.router import router as kestrel_research_router
@@ -26,7 +27,7 @@ from .providers.cache import CachePolicy, ProviderCache
 from .providers.contracts import ProviderResult
 from .sec_edgar.client import SecAccessBlocked, SecClientError, SecConfigurationError, SecEdgarHttpClient, SecEdgarSettings, SecRateLimited
 from .sec_edgar.mapping import SecCompanyReport, SecMappingError
-from .sec_edgar.discovery import SecDiscoveryService
+from .sec_edgar.discovery import SecDiscoveryService, WATCHLIST_ACTIVITY_FORMS
 from .sec_edgar.service import SecCompanyResearchService
 
 LOGGER = logging.getLogger("jujosmi_trade_api")
@@ -353,6 +354,34 @@ def get_sec_company_directory(
         provenance="SEC EDGAR company_tickers_exchange.json", warnings=[])
 
 
+@app.get(f"{API_PREFIX}/discovery/industry-companies", response_model=ApiEnvelope[SecIndustryData])
+def get_sec_industry_companies(
+    q: Annotated[str, Query(min_length=2, max_length=60, pattern=r"^[A-Za-z0-9 .&,'-]+$")],
+    exchange: Annotated[str | None, Query(max_length=40, pattern=r"^[A-Za-z0-9 .&-]*$")] = None,
+    limit: Annotated[int, Query(ge=1, le=10)] = 10,
+    offset: Annotated[int, Query(ge=0, le=100000)] = 0,
+):
+    """Classify only a bounded, user-searched page using issuer SEC submissions."""
+    global _sec_discovery_service
+    try:
+        client = _get_sec_client()
+        client.begin_report()
+        if _sec_discovery_service is None:
+            _sec_discovery_service = SecDiscoveryService(client)
+        data, warnings = _sec_discovery_service.industry_companies(
+            query=" ".join(q.split()), exchange=exchange, limit=limit, offset=offset,
+        )
+    except (SecConfigurationError, SecRateLimited, SecAccessBlocked, SecClientError, SecMappingError) as exc:
+        raise _sec_error_http(exc) from exc
+    status = "partial" if warnings or data.unclassified_count else "ok"
+    return ApiEnvelope[SecIndustryData](
+        data=data, status=status, source="sec-edgar",
+        freshness="cached" if client.report_cached else "live",
+        as_of=datetime.now(timezone.utc).isoformat(),
+        provenance="Official SEC issuer submissions SIC code and description", warnings=warnings,
+    )
+
+
 @app.get(f"{API_PREFIX}/discovery/filings/{{symbol}}", response_model=ApiEnvelope[SecFilingsData])
 def get_sec_discovery_filings(
     symbol: Annotated[str, Path(min_length=1, max_length=10, pattern=SYMBOL_PATTERN)],
@@ -372,6 +401,63 @@ def get_sec_discovery_filings(
     return ApiEnvelope[SecFilingsData](data=data, status="partial" if warnings else "ok", source="sec-edgar",
         freshness="cached" if client.report_cached else "live", as_of=datetime.now(timezone.utc).isoformat(),
         provenance="Official SEC EDGAR issuer submissions", warnings=warnings)
+
+
+@app.post(f"{API_PREFIX}/discovery/filings/watchlist", response_model=ApiEnvelope[SecWatchlistActivityData])
+def get_sec_watchlist_filing_activity(payload: SecWatchlistActivityRequest):
+    """Retrieve a bounded set of recent company filings sequentially through the shared SEC client."""
+    global _sec_discovery_service
+    try:
+        client = _get_sec_client()
+        client.begin_report()
+        if _sec_discovery_service is None:
+            _sec_discovery_service = SecDiscoveryService(client)
+    except (SecConfigurationError, SecRateLimited, SecAccessBlocked, SecClientError, SecMappingError) as exc:
+        raise _sec_error_http(exc) from exc
+
+    entries: list[SecWatchlistActivityEntry] = []
+    for company in payload.companies:
+        ticker = company.ticker.upper()
+        try:
+            data, warnings = _sec_discovery_service.recent_filings(
+                ticker,
+                exchange=company.exchange,
+                limit=20,
+                allowed_forms=WATCHLIST_ACTIVITY_FORMS,
+            )
+            entries.append(SecWatchlistActivityEntry(
+                requested_ticker=ticker,
+                requested_exchange=company.exchange,
+                status="partial" if warnings else "ok",
+                data=data,
+                warnings=warnings,
+            ))
+        except (SecConfigurationError, SecRateLimited, SecAccessBlocked, SecClientError, SecMappingError) as exc:
+            http_error = _sec_error_http(exc)
+            status = "rate_limited" if isinstance(exc, SecRateLimited) else "unavailable"
+            entries.append(SecWatchlistActivityEntry(
+                requested_ticker=ticker,
+                requested_exchange=company.exchange,
+                status=status,
+                error=str(http_error.detail),
+            ))
+
+    unavailable_count = sum(entry.status in {"unavailable", "rate_limited", "failed"} for entry in entries)
+    partial = unavailable_count > 0 or any(entry.status == "partial" for entry in entries)
+    warnings = [f"{unavailable_count} of {len(entries)} company filing checks were unavailable."] if unavailable_count else []
+    return ApiEnvelope[SecWatchlistActivityData](
+        data=SecWatchlistActivityData(
+            entries=entries,
+            limit=5,
+            disclosure="Recent SEC issuer submissions are factual filing records, not forecasts or investment advice. No filing is interpreted as a prediction.",
+        ),
+        status="partial" if partial else "ok",
+        source="sec-edgar",
+        freshness="cached" if client.report_cached else "live",
+        as_of=datetime.now(timezone.utc).isoformat(),
+        provenance="Official SEC EDGAR issuer submissions",
+        warnings=warnings,
+    )
 
 
 @app.get(f"{API_PREFIX}/companies/{{symbol}}/sec-research", response_model=ApiEnvelope[SecCompanyReport])

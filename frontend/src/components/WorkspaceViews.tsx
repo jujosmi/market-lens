@@ -5,10 +5,13 @@ import { WorkspaceTabs } from "./WorkspaceTabs";
 import { ExpandableResearchCard } from "./ExpandableResearchCard";
 import { fixtureRepository, sectors, type DirectoryFixture } from "../data/workspaceFixtures";
 import { buildSecResearchMetrics, reportableBalanceSheetContext } from "../data/secResearchMetrics";
-import { ApiRequestError, fetchCompanyResearch, fetchDiscovery, fetchDiscoveryCalendar, fetchNewsEvents, fetchSecDirectory, fetchSecFilings, fetchSecResearch, fetchTechnicalAnalysis, fetchWatchlistSummaries, type ApiEnvelope, type DiscoveryCalendarData, type DiscoveryData, type NewsEventsData, type ResearchData, type SecCompanyReport, type SecDirectoryData, type SecFilingActivity, type SecFilingsData, type TechnicalAnalysisData, type WatchlistSummaryData } from "../data/apiClient";
+import { ApiRequestError, fetchCompanyResearch, fetchDiscovery, fetchDiscoveryCalendar, fetchNewsEvents, fetchSecDirectory, fetchSecFilings, fetchSecIndustryCompanies, fetchSecResearch, fetchTechnicalAnalysis, fetchWatchlistSummaries, type ApiEnvelope, type DiscoveryCalendarData, type DiscoveryData, type NewsEventsData, type ResearchData, type SecCompanyReport, type SecDirectoryData, type SecFilingActivity, type SecFilingsData, type SecIndustryData, type TechnicalAnalysisData, type WatchlistSummaryData } from "../data/apiClient";
 import type { DataMode } from "../types";
 import { tradingViewSymbols, tradingViewTickerSymbols } from "../data/tradingViewSymbols";
 import { SecFinancialStatements } from "./SecFinancialStatements";
+import { TradingViewWidget } from "./TradingViewWidget";
+import { isTradingViewResearchWidgetsEnabled } from "../releaseFeatures";
+import { WatchlistFilingActivity } from "./WatchlistFilingActivity";
 
 type CommonProps = { selectedSymbol: string; selectedSecExchange?: string | null; selectedTicker: (typeof tickerFixtures)[number]; watchlist: string[]; onSelectTicker: (symbol: string, exchange?: string) => void; onNavigate: (workspace: "research" | "overview") => void; onToggleWatchlist?: (symbol: string) => void };
 type AccountWatchlistEntry = { id: string; symbol: string; exchange: string };
@@ -171,9 +174,9 @@ function PublicResearchWorkspace({ symbol, exchange, onNavigate, watchlisted, on
     <div className="research-company-header"><div className="ticker-avatar">{(secReport?.identity.name ?? symbol).slice(0, 1)}</div><div className="research-company-name"><span>{secReport ? `CIK ${secReport.identity.cik} · ${secReport.identity.exchange ?? "Exchange not listed"} · SEC issuer identity` : "SEC issuer identity"}</span><h2>{secReport?.identity.name ?? symbol} <small>{secReport?.identity.ticker ?? symbol}</small></h2><p><span className="fixture-indicator-dot" />{secReport ? "Company identity verified against SEC ticker/CIK directory" : "Identity loads from the official SEC directory when available"}</p></div><button className={`outline-button ${watchlisted ? "saved" : ""}`} aria-pressed={watchlisted} onClick={() => onToggleWatchlist?.(symbol)}><Bookmark size={14} fill={watchlisted ? "currentColor" : "none"} />{watchlisted ? "Saved · remove" : "Save to watchlist"}</button><button className="outline-button" onClick={() => onNavigate("overview")}>Market overview <ArrowDownRight size={14} /></button></div>
     <WorkspaceTabs label="Company research sections" items={tabs} value={tab} onChange={setTab} />
     <div className="discovery-summary-row"><div><span className="section-kicker">{tab.toUpperCase()} · {symbol}</span><h2>{names[tab]}</h2></div></div>
-    {tab === "Overview" || tab === "Financials" ? <SecFinancialPanel loading={secLoading || Boolean(secResponse && !secMatchesSelection)} error={secError} report={secReport} envelope={secMatchesSelection ? secResponse : null} mode={tab} />
+    {tab === "Overview" || tab === "Financials" ? <><SecFinancialPanel loading={secLoading || Boolean(secResponse && !secMatchesSelection)} error={secError} report={secReport} envelope={secMatchesSelection ? secResponse : null} mode={tab} />{tab === "Overview" && <JujosmiResearchAvailability />}</>
       : tab === "Events & Filings" ? <SecEventsPanel symbol={symbol} response={filingsResponse} loading={filingsState === "loading"} error={filingsError} state={filingsState} onRetry={() => setFilingsRetry((value) => value + 1)} />
-      : <TradingViewResearchAccess symbol={symbol} kind={tab === "News" ? "news" : "technical"} />}
+      : <TradingViewResearchAccess symbol={symbol} kind={tab === "News" ? "news" : "technical"} enabled={isTradingViewResearchWidgetsEnabled()} />}
   </div>;
 }
 
@@ -209,21 +212,58 @@ function SecEventsPanel({ symbol, response, loading, error, state, onRetry }: { 
   </section>;
 }
 
-function TradingViewResearchAccess({ symbol, kind }: { symbol: string; kind: "news" | "technical" }) {
+function JujosmiResearchAvailability() {
+  return <section className="jujosmi-research-availability" aria-label="Jujosmi research ratings and source status">
+    <header><span className="section-kicker">JUJOSMI RESEARCH SENTIMENT</span><h3>Ratings from Jujosmi analysis</h3><p>Original Jujosmi classification and analytics methods are preserved. Public ratings appear only when the required authorized inputs are connected and validated.</p></header>
+    <div className="jujosmi-research-status-grid">
+      <ResearchAvailabilityCard title="News sentiment" status="Not available — data source not connected" detail="Method: Jujosmi headline classifier. Requires authorized, issuer-relevant news input. No observation timestamp is available." />
+      <ResearchAvailabilityCard title="Technical rating" status="Not available — data source not connected" detail="Method: Jujosmi analytics rating rules. Requires authorized validated price history. TradingView widget output is not used." />
+      <ResearchAvailabilityCard title="Analyst consensus" status="Not available — authorized inputs not connected" detail="No authorized analyst ratings or price-target inputs are connected. No consensus is inferred." />
+    </div>
+  </section>;
+}
+
+function ResearchAvailabilityCard({ title, status, detail }: { title: string; status: string; detail: string }) {
+  return <article className="jujosmi-research-status-card"><span>{title}</span><b>{status}</b><small>Source: unavailable · Observed: unavailable</small><p>{detail}</p></article>;
+}
+
+function TradingViewResearchAccess({ symbol, kind, enabled }: { symbol: string; kind: "news" | "technical"; enabled: boolean }) {
   const qualified = tradingViewSymbols[symbol];
   const url = qualified
     ? `https://www.tradingview.com/symbols/${qualified.replace(":", "-")}/${kind === "news" ? "news/" : "technicals/"}`
     : null;
+  const providerUrl = url ?? "https://www.tradingview.com/markets/stocks-usa/";
   const isNews = kind === "news";
+  const moduleUrl = isNews
+    ? "https://widgets.tradingview-widget.com/w/en/tv-news-feed.js"
+    : "https://widgets.tradingview-widget.com/w/en/tv-technical-analysis.js";
   return <section className="public-unavailable-card research-provider-access">
     <span className="section-kicker">TRADINGVIEW · PROVIDER-HOSTED RESEARCH</span>
     <h3>{isNews ? `News for ${symbol}` : `Technical analysis for ${symbol}`}</h3>
     <p>{isNews
-      ? "Open TradingView’s company-specific news page to read provider-hosted coverage. Jujosmi does not copy headlines, add sentiment labels, or store article content."
-      : "Open TradingView’s company-specific technical analysis page for its provider-hosted summary. Jujosmi does not extract indicators or use them in its own calculations."}</p>
-    {url ? <a className="primary-button research-provider-link" href={url} target="_blank" rel="noopener noreferrer nofollow">Open {isNews ? "company news" : "technical analysis"} at TradingView <ArrowDownRight size={14}/></a>
-      : <p className="table-empty">No exchange-qualified TradingView symbol is configured for {symbol}. Choose a supported ticker in the application selector.</p>}
-    <p className="table-caption">TradingView embeds are not enabled in public Company Research pending written clarification of commercial-use permissions. The provider's terms limit its services to personal/internal display use absent a separate agreement. This link opens TradingView directly and is not a data feed.</p>
+      ? "TradingView’s hosted News Feed is symbol-specific. Jujosmi does not copy headlines, assign sentiment labels, store article text, or use it in Jujosmi calculations."
+      : "TradingView’s technical widget is a separate provider assessment. Its gauge, oscillators, and moving averages are not Jujosmi ratings and are never used in Jujosmi calculations."}</p>
+    {!qualified && <p className="table-empty">No exchange-qualified TradingView symbol is configured for {symbol}. Choose a supported ticker in the application selector.</p>}
+    {enabled && qualified ? <>
+      <TradingViewWidget
+        scriptUrl={moduleUrl}
+        tagName={isNews ? "tv-news-feed" : "tv-technical-analysis"}
+        attributes={isNews
+          ? { feed: "symbol", symbol: qualified, "news-type": "top-stories", "layout-mode": "flow", "story-size": "normal", theme: "dark" }
+          : { symbol: qualified, interval: "1D", display: "ratings", "display-mode": "gauge", theme: "dark" }}
+        providerUrl={providerUrl}
+        providerLinkLabel={`Open ${isNews ? "company news" : "technical analysis"} at TradingView`}
+        height={isNews ? 540 : 420}
+        label={`${qualified} TradingView ${isNews ? "News Feed" : "Technical Analysis"}`}
+        className={isNews ? "tradingview-news-feed" : "tradingview-technical-analysis"}
+      />
+      <div className="jujosmi-inline-sentiment"><ResearchAvailabilityCard title={isNews ? "Jujosmi news sentiment" : "Jujosmi technical rating"} status="Not available — data source not connected" detail={isNews ? "The Jujosmi classifier is retained, but no authorized company-news input is connected. TradingView headlines are not copied or classified." : "The Jujosmi technical rating requires authorized price history. TradingView’s separate widget assessment is not used."} /></div>
+    </> : <>
+      <p className="tradingview-widget-unavailable">{enabled ? "A company-specific widget is unavailable for this exchange-qualified ticker. Use the provider-hosted page." : "Embedded provider research is disabled pending approval for this product’s intended use."}</p>
+      <a className="primary-button research-provider-link" href={providerUrl} target="_blank" rel="noopener noreferrer nofollow">Open {isNews ? "company news" : "technical analysis"} at TradingView <ArrowDownRight size={14}/></a>
+      <div className="jujosmi-inline-sentiment"><ResearchAvailabilityCard title={isNews ? "Jujosmi news sentiment" : "Jujosmi technical rating"} status="Not available — data source not connected" detail={isNews ? "The Jujosmi classifier is retained, but no authorized company-news input is connected." : "The Jujosmi technical rating requires authorized price history. No rating is inferred."} /></div>
+    </>}
+    <p className="table-caption">TradingView provides third-party widgets and provider-hosted links. Its current terms restrict commercial use absent separate agreement. Keep the release widget flag disabled until intended use is cleared in writing. No widget data is extracted.</p>
   </section>;
 }
 
@@ -265,8 +305,8 @@ function SecFilings({ filings }: { filings: SecCompanyReport["filings"] }) {
   return <section className="sec-filings"><span className="section-kicker">SEC SUBMISSIONS HISTORY</span><h3>Recent annual and quarterly filings</h3>{filings.length ? <ul>{filings.map((filing) => <li key={filing.accession_number}><div><b>{filing.form}</b><span>Filed {filing.filing_date} · report period {filing.report_period ?? "not provided"}</span><small>Accession {filing.accession_number}</small></div>{filing.filing_url && <a href={filing.filing_url} target="_blank" rel="noreferrer">Open filing <FileText size={14} /></a>}</li>)}</ul> : <p>No recent 10-K, 10-Q, 20-F, or 40-F filings were available in the SEC submissions response.</p>}</section>;
 }
 
-function UnavailablePanel({ title, detail }: { title: string; detail: string }) {
-  return <section className="public-unavailable-card"><span className="section-kicker">UNAVAILABLE · NO SOURCE CONNECTED</span><h3>{title}</h3><p>{detail}</p></section>;
+function UnavailablePanel({ title, detail, providerUrl, providerLabel }: { title: string; detail: string; providerUrl?: string; providerLabel?: string }) {
+  return <section className="public-unavailable-card"><span className="section-kicker">UNAVAILABLE · NO NATIVE SOURCE CONNECTED</span><h3>{title}</h3><p>{detail}</p>{providerUrl && providerLabel && <a className="primary-button research-provider-link" href={providerUrl} target="_blank" rel="noopener noreferrer nofollow">{providerLabel} <ArrowDownRight size={14}/></a>}</section>;
 }
 
 export function DiscoveryWorkspace(props: CommonProps & { dataMode?: DataMode }) {
@@ -284,6 +324,15 @@ function PublicDiscoveryWorkspace({ selectedSymbol, onSelectTicker, onNavigate }
   const [directoryState, setDirectoryState] = useState<"loading" | "ready" | "error">("loading");
   const [directoryError, setDirectoryError] = useState("");
   const [directoryRetry, setDirectoryRetry] = useState(0);
+  const [industryQuery, setIndustryQuery] = useState("");
+  const [industrySubmitted, setIndustrySubmitted] = useState("");
+  const [industryPage, setIndustryPage] = useState(0);
+  const [industryRetry, setIndustryRetry] = useState(0);
+  const [industryData, setIndustryData] = useState<ApiEnvelope<SecIndustryData> | null>(null);
+  const [industryState, setIndustryState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [industryError, setIndustryError] = useState("");
+  const [industrySector, setIndustrySector] = useState("");
+  const [industryName, setIndustryName] = useState("");
   const [filingSymbol, setFilingSymbol] = useState("");
   const [filingExchange, setFilingExchange] = useState("");
   const [submittedFiling, setSubmittedFiling] = useState<{symbol:string;exchange:string;retry:number}|null>(null);
@@ -304,6 +353,17 @@ function PublicDiscoveryWorkspace({ selectedSymbol, onSelectTicker, onNavigate }
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [tab, query, exchange, page, directoryRetry]);
   useEffect(() => {
+    if (tab !== "Industry browser" || !industrySubmitted) return;
+    const controller = new AbortController();
+    setIndustryState("loading"); setIndustryError(""); setIndustryData(null);
+    fetchSecIndustryCompanies({query:industrySubmitted,exchange,limit:10,offset:industryPage*10},controller.signal).then((response) => {
+      setIndustryData(response); setIndustryState("ready");
+    }).catch((cause:unknown) => {
+      if (!controller.signal.aborted) { setIndustryError(cause instanceof ApiRequestError ? cause.message : "Verified SEC industry data could not be loaded."); setIndustryState("error"); }
+    });
+    return () => controller.abort();
+  }, [tab, industrySubmitted, exchange, industryPage, industryRetry]);
+  useEffect(() => {
     if (!submittedFiling || tab !== "Recent SEC filings") return;
     const controller = new AbortController();
     setFilingsState("loading"); setFilingsError(""); setFilings(null);
@@ -314,7 +374,11 @@ function PublicDiscoveryWorkspace({ selectedSymbol, onSelectTicker, onNavigate }
     });
     return () => controller.abort();
   }, [tab, submittedFiling]);
-  const exchangeOptions = directory?.data?.available_exchanges ?? [];
+  const exchangeOptions = directory?.data?.available_exchanges ?? industryData?.data?.available_exchanges ?? [];
+  const verifiedRows = industryData?.data?.companies ?? [];
+  const sicSectors = [...new Set(verifiedRows.map((item) => item.sic_sector))].sort();
+  const sicIndustries = [...new Set(verifiedRows.filter((item) => !industrySector || item.sic_sector === industrySector).map((item) => item.sic_description))].sort();
+  const filteredIndustryRows = verifiedRows.filter((item) => (!industrySector || item.sic_sector === industrySector) && (!industryName || item.sic_description === industryName));
   const items = directory?.data?.companies ?? [];
   function showCompanyFilings(symbol:string, selectedExchange:string|null) {
     const nextExchange=selectedExchange ?? "";
@@ -328,7 +392,7 @@ function PublicDiscoveryWorkspace({ selectedSymbol, onSelectTicker, onNavigate }
   return <div className="functional-workspace">
     <WorkspaceHeading kicker="DISCOVERY WORKSPACE" title="Explore SEC company records." description="Search public company identity records and inspect actual filing history from official EDGAR data." badge="SEC EDGAR · PUBLIC RECORDS" />
     <div className="public-data-note"><ShieldCheck size={16} /><span>The SEC ticker directory is an association file, not a complete or authoritative list of currently tradable securities. It does not provide GICS sector or industry classifications. Filing dates are actual submissions, not scheduled earnings events.</span></div>
-    <WorkspaceTabs label="Discovery views" items={["Company directory", "Recent SEC filings", "Earnings soon", "IPO calendar"]} value={tab} onChange={setTab} />
+    <WorkspaceTabs label="Discovery views" items={["Company directory", "Industry browser", "Recent SEC filings", "Earnings soon", "IPO calendar"]} value={tab} onChange={setTab} />
     {tab === "Company directory" ? <>
       <div className="discovery-toolbar sec-directory-toolbar"><label className="directory-search"><Search size={16} /><input aria-label="Search SEC companies by name or ticker" placeholder="Search company name or ticker…" maxLength={60} value={query} onChange={(event) => { setQuery(event.target.value);setPage(0); }} /><kbd>SEC records</kbd></label><label className="filter-select"><Filter size={14} /><span>Exchange</span><select aria-label="Filter by exchange" value={exchange} onChange={(event) => {setExchange(event.target.value);setPage(0);}}><option value="">All exchanges</option>{exchangeOptions.map((item)=><option key={item} value={item}>{item}</option>)}</select><ChevronDown size={13} /></label></div>
       <div className="discovery-summary-row"><div><span className="section-kicker">SEC COMPANY TICKER DIRECTORY</span><h2>{directoryState === "ready" ? `${directory?.data?.total.toLocaleString() ?? 0} matching SEC records` : "Search company identity records"}</h2></div>{directory && <span className="sec-freshness">{directory.freshness === "cached" ? "SEC DIRECTORY · CACHED" : "SEC DIRECTORY · RETRIEVED"}</span>}</div>
@@ -341,6 +405,30 @@ function PublicDiscoveryWorkspace({ selectedSymbol, onSelectTicker, onNavigate }
         <div className="sec-pagination"><span>Showing {items.length ? directory!.data!.offset+1 : 0}–{directory!.data!.offset+items.length} of {directory!.data!.total.toLocaleString()}</span><div><button className="quiet-button" disabled={page===0} onClick={()=>setPage((value)=>Math.max(0,value-1))}>Previous</button><button className="quiet-button" disabled={directory!.data!.offset+items.length>=directory!.data!.total} onClick={()=>setPage((value)=>value+1)}>Next</button></div></div>
       </>}
       {directory?.stale && <p className="table-caption" role="status">Showing a previously successful SEC directory response; the latest request is marked stale.</p>}
+    </> : tab === "Industry browser" ? <>
+      <div className="public-data-note"><ShieldCheck size={16} /><span>SEC-based SIC browser · partial, search-scoped coverage. Search the SEC directory first; up to 10 matching issuers per page are enriched from official SEC submissions. Broad groups follow SIC major divisions and are not GICS sectors. Only verified classifications appear.</span></div>
+      <form className="discovery-toolbar sec-directory-toolbar" onSubmit={(event)=>{event.preventDefault();const value=industryQuery.trim();if(value.length>=2){setIndustrySubmitted(value);setIndustryPage(0);setIndustrySector("");setIndustryName("");setIndustryRetry((count)=>count+1);}}}>
+        <label className="directory-search"><Search size={16}/><input aria-label="Search companies for verified SEC industry classifications" placeholder="Search at least 2 letters or ticker…" maxLength={60} value={industryQuery} onChange={(event)=>{setIndustryQuery(event.target.value);setIndustrySubmitted("");setIndustryData(null);setIndustryState("idle");setIndustrySector("");setIndustryName("");}} /></label>
+        <label className="filter-select"><Filter size={14}/><span>Exchange</span><select aria-label="Filter industry search by exchange" value={exchange} onChange={(event)=>{setExchange(event.target.value);setIndustryPage(0);}}><option value="">All exchanges</option>{exchangeOptions.map((item)=><option key={item} value={item}>{item}</option>)}</select></label>
+        <button className="primary-button" type="submit" disabled={industryQuery.trim().length<2}>Search SEC industry records</button>
+        <button className="quiet-button" type="button" onClick={()=>{setIndustryQuery("");setIndustrySubmitted("");setExchange("");setIndustryPage(0);setIndustrySector("");setIndustryName("");setIndustryData(null);setIndustryState("idle");}}>Reset</button>
+      </form>
+      <div className="discovery-toolbar sec-directory-toolbar">
+        <label className="filter-select"><Filter size={14}/><span>SIC group</span><select aria-label="Filter verified results by SIC group" value={industrySector} onChange={(event)=>{setIndustrySector(event.target.value);setIndustryName("");}}><option value="">All verified groups</option>{sicSectors.map((item)=><option key={item} value={item}>{item}</option>)}</select></label>
+        <label className="filter-select"><Filter size={14}/><span>SEC SIC industry</span><select aria-label="Filter verified results by SEC SIC industry" value={industryName} onChange={(event)=>setIndustryName(event.target.value)}><option value="">All verified SIC descriptions</option>{sicIndustries.map((item)=><option key={item} value={item}>{item}</option>)}</select></label>
+      </div>
+      {industryState === "idle" && <div className="table-empty">Enter a company name or ticker above to build a limited, SEC-verified industry result page.</div>}
+      {industryState === "loading" && <div className="workspace-state" role="status"><span className="loading-ring"/>Checking SEC issuer submissions for official SIC classifications…</div>}
+      {industryState === "error" && <div className="workspace-state workspace-error" role="alert"><CircleHelp size={18}/><div><b>SEC industry records unavailable</b><span>{industryError}</span></div><button className="quiet-button" onClick={()=>setIndustryRetry((value)=>value+1)}>Retry</button></div>}
+      {industryState === "ready" && industryData?.data && <>
+        <div className="discovery-summary-row"><div><span className="section-kicker">SEARCH-PAGE CLASSIFICATION COVERAGE</span><h2>{filteredIndustryRows.length} verified matches · {industryData.data.classified_count} classified of {industryData.data.total_candidates} checked</h2></div><span className="sec-freshness">{industryData.freshness === "cached" ? "SEC SUBMISSIONS · CACHED" : "SEC SUBMISSIONS · RETRIEVED"}</span></div>
+        <div className="sec-directory-table" role="table" aria-label="SEC verified industry matches"><div className="sec-directory-row sec-directory-head" role="row"><span>COMPANY · TICKER</span><span>SIC GROUP · OFFICIAL SIC DESCRIPTION</span><span>EXCHANGE · CIK</span><span>RESEARCH</span></div>
+          {filteredIndustryRows.map((item)=><div className="sec-directory-row" role="row" key={`${item.cik}-${item.ticker}-${item.exchange ?? ""}`}><button className="sec-company-select" aria-pressed={selectedSymbol===item.ticker} onClick={()=>onSelectTicker(item.ticker,item.exchange ?? undefined)} aria-label={`Select ${item.name} (${item.ticker})`}><span className="directory-avatar">{item.ticker.slice(0,1)}</span><span><b>{item.name}</b><small>{item.ticker}</small></span></button><span><b>{item.sic_sector}</b><small>{item.sic_description} · SIC {item.sic}</small></span><span>{item.exchange ?? "Not supplied"}<small>CIK {item.cik}</small></span><button className="row-research" aria-label={`Open Company Research for ${item.name} (${item.ticker})`} onClick={()=>{onSelectTicker(item.ticker,item.exchange ?? undefined);onNavigate("research");}}>Company Research <ArrowDownRight size={13}/></button></div>)}
+          {!filteredIndustryRows.length && <div className="table-empty">No verified SEC SIC classifications match these filters on this search page. Try another search or page.</div>}
+        </div>
+        <div className="sec-pagination"><span>Directory matches {industryData.data.total_matches ? industryData.data.offset+1 : 0}–{industryData.data.offset+industryData.data.total_candidates} of {industryData.data.total_matches} · at most 10 enriched per page</span><div><button className="quiet-button" disabled={industryPage===0} onClick={()=>setIndustryPage((value)=>Math.max(0,value-1))}>Previous</button><button className="quiet-button" disabled={industryData.data.offset+industryData.data.total_candidates>=industryData.data.total_matches} onClick={()=>setIndustryPage((value)=>value+1)}>Next</button></div></div>
+        <p className="table-caption">{industryData.data.disclosure}</p>{industryData.warnings.map((warning)=><p className="table-caption" role="status" key={warning}>{warning}</p>)}{industryData.data.unclassified_count>0 && <p className="table-caption" role="status">{industryData.data.unclassified_count} searched SEC records lacked a validated SIC classification or could not be enriched; they are omitted from industry matches.</p>}
+      </>}
     </> : tab === "Recent SEC filings" ? <>
       <div className="discovery-summary-row"><div><span className="section-kicker">ISSUER SUBMISSIONS</span><h2>Recent filings by company</h2></div></div>
       <p className="sec-discovery-source">Select “Recent filings” on a directory result, or enter an exact SEC ticker. The exchange selector on directory results disambiguates duplicate ticker symbols.</p>
@@ -348,7 +436,12 @@ function PublicDiscoveryWorkspace({ selectedSymbol, onSelectTicker, onNavigate }
       {filingsError && filingsState === "error" && <div className="workspace-state workspace-error" role="alert"><CircleHelp size={18}/><div><b>Filing history unavailable</b><span>{filingsError}</span></div>{submittedFiling && <button className="quiet-button" onClick={()=>setSubmittedFiling({...submittedFiling,retry:Date.now()})}>Retry</button>}</div>}
       {filingsState === "loading" && <div className="workspace-state" role="status"><span className="loading-ring"/> Requesting this issuer’s SEC submissions…</div>}
       {filings && filings.data && <><div className="sec-issuer-summary"><div><span className="section-kicker">{filings.freshness === "cached" ? "CACHED SEC SUBMISSIONS" : "SEC SUBMISSIONS"}</span><h3>{filings.data.company_name} <small>{filings.data.ticker}</small></h3><p>CIK {filings.data.cik}{filings.data.exchange ? ` · ${filings.data.exchange}` : ""}{filings.data.sic_description ? ` · SIC ${filings.data.sic ?? ""}: ${filings.data.sic_description}` : " · SEC SIC classification unavailable"}</p></div><span className="sec-freshness">{filings.freshness.toUpperCase()}</span></div><p className="sec-discovery-source">Retrieved {filings.as_of ? new Date(filings.as_of).toLocaleString() : "timestamp unavailable"} · <a href={`https://www.sec.gov/edgar/browse/?CIK=${filings.data.cik}&owner=exclude`} target="_blank" rel="noreferrer">SEC issuer filings</a></p>{filings.data.filings.length ? <div className="sec-filings-list">{filings.data.filings.map((filing)=><article className="sec-filing-row" key={filing.accession_number}><div><span className="rating-chip rating-balanced">{filing.form}</span><h3>{filing.company_name}</h3><p>Filed {filing.filing_date}{filing.report_date ? ` · reporting period ${filing.report_date}` : " · report period not supplied"}</p><small>Accession {filing.accession_number}</small></div>{filing.filing_url && <a className="row-research" href={filing.filing_url} target="_blank" rel="noreferrer">Open filing <ArrowDownRight size={13}/></a>}</article>)}</div> : <div className="table-empty">No recent 10-K, 10-Q, 8-K, or S-1 entries were returned for this issuer.</div>}{filings.warnings.map((warning)=><p className="table-caption" role="status" key={warning}>{warning}</p>)}<p className="table-caption">{filings.data.disclosure}</p></>}
-    </> : <UnavailablePanel title={tab === "Earnings soon" ? "Scheduled earnings dates unavailable" : "IPO trading dates unavailable"} detail={tab === "Earnings soon" ? "SEC submissions show filed documents, not future earnings schedules. No approved scheduled-events source is connected." : "An S-1 registration statement is not a confirmed IPO date. SEC filings do not provide a reliable future IPO calendar here."} />}
+    </> : <UnavailablePanel
+      title={tab === "Earnings soon" ? "Scheduled earnings dates unavailable" : "IPO trading dates unavailable"}
+      detail={tab === "Earnings soon" ? "SEC submissions show filed documents, not future earnings schedules. No approved native scheduled-events source is connected." : "An S-1 registration statement is not a confirmed IPO date. SEC filings do not provide a reliable future IPO calendar here."}
+      providerUrl={tab === "Earnings soon" ? "https://www.tradingview.com/earnings-calendar/" : "https://www.tradingview.com/ipo-calendar/"}
+      providerLabel={tab === "Earnings soon" ? "Open TradingView earnings calendar" : "Open TradingView IPO calendar"}
+    />}
   </div>;
 }
 
@@ -484,17 +577,32 @@ function FixtureWatchlistWorkspace({ selectedSymbol, selectedSecExchange, watchl
   </div>;
 }
 
-export function WatchlistWorkspace(props: CommonProps & { onAddTicker: (symbol: string, exchange?: string) => Promise<boolean>; onRemoveTicker: (symbol: string, exchange?: string) => Promise<boolean>; dataMode?: DataMode; persistent?: boolean; accountLoading?: boolean; accountEntries?: AccountWatchlistEntry[]; watchlistError?: string }) {
-  return props.dataMode === "public" ? <PublicWatchlistWorkspace {...props} /> : <FixtureWatchlistWorkspace {...props} dataMode={props.dataMode ?? "fixtures"} persistent={props.persistent} accountLoading={props.accountLoading} accountEntries={props.accountEntries} watchlistError={props.watchlistError} />;
+export function WatchlistWorkspace(props: CommonProps & { onAddTicker: (symbol: string, exchange?: string) => Promise<boolean>; onRemoveTicker: (symbol: string, exchange?: string) => Promise<boolean>; dataMode?: DataMode; persistent?: boolean; accountLoading?: boolean; accountEntries?: AccountWatchlistEntry[]; watchlistError?: string; reviewScope?: string }) {
+  if (props.dataMode === "public") {
+    const companies = props.persistent
+      ? (props.accountEntries ?? []).map(({ symbol, exchange }) => ({ ticker: symbol, exchange: exchange || null }))
+      : props.watchlist.map((symbol) => ({ ticker: symbol, exchange: tickerFor(symbol).exchange || null }));
+    return <>
+      <PublicWatchlistWorkspace {...props} />
+      <WatchlistFilingActivity
+        companies={companies}
+        reviewScope={props.reviewScope ?? "guest"}
+        onSelectTicker={props.onSelectTicker}
+        onNavigate={props.onNavigate}
+        disabled={Boolean(props.persistent && props.accountLoading)}
+      />
+    </>;
+  }
+  return <FixtureWatchlistWorkspace {...props} dataMode={props.dataMode ?? "fixtures"} persistent={props.persistent} accountLoading={props.accountLoading} accountEntries={props.accountEntries} watchlistError={props.watchlistError} />;
 }
 
 function PublicWatchlistWorkspace({ selectedSymbol, watchlist, accountEntries = [], accountLoading = false, watchlistError = "", onSelectTicker, onAddTicker, onRemoveTicker, onNavigate, persistent = false }: CommonProps & { onAddTicker: (symbol: string, exchange?: string) => Promise<boolean>; onRemoveTicker: (symbol: string, exchange?: string) => Promise<boolean>; persistent?: boolean; accountEntries?: AccountWatchlistEntry[]; accountLoading?: boolean; watchlistError?: string }) {
   const [query, setQuery] = useState("");
   const suggestions = tradingViewTickerSymbols.filter((symbol) => !watchlist.includes(symbol) && symbol.includes(query.trim().toUpperCase()));
-  const savedEntries = persistent ? accountEntries : watchlist.map((symbol) => ({ id: "", symbol, exchange: "" }));
+  const savedEntries = persistent ? accountEntries : watchlist.map((symbol) => ({ id: "", symbol, exchange: tickerFor(symbol).exchange }));
   return <div className="functional-workspace">
     <WorkspaceHeading kicker="YOUR WATCHLIST" title="Keep your research close." description={persistent ? "Manage the symbols saved to your account." : "Manage a temporary list of exchange-qualified chart symbols in this browser session."} badge={persistent ? "ACCOUNT WATCHLIST" : "PUBLIC VIEW · GUEST SESSION"} />
-    <div className="public-data-note"><ShieldCheck size={16} /><span>{persistent ? "Only ticker and exchange identifiers are stored in your account. Company names, quotes, sector data, and ratings are not provided in public mode." : "Guest symbols stay temporary in this browser session. Company names, quotes, sector data, and ratings are not provided in public mode."}</span></div>
+    <div className="public-data-note"><ShieldCheck size={16} /><span>{persistent ? "Only ticker and exchange identifiers are stored in your account. Company names appear in SEC filing activity only; quotes, sector data, and ratings are not provided in public mode." : "Guest symbols stay temporary in this browser session. Company names appear in SEC filing activity only; quotes, sector data, and ratings are not provided in public mode."}</span></div>
     {persistent && watchlistError && <div className="workspace-state workspace-error" role="alert">{watchlistError}</div>}
     <div className="watchlist-toolbar"><label className="directory-search"><Search size={16} /><input aria-label="Search tickers to add" placeholder="Find a supported ticker…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>{suggestions.length} available</kbd></label></div>
     {query && <div className="ticker-suggestion-list" role="listbox" aria-label="Exchange-qualified chart tickers">{suggestions.map((symbol) => { const exchange = symbol.includes("JPM") || symbol.includes("LLY") ? "NYSE" : "NASDAQ"; return <button key={symbol} role="option" aria-selected="false" onClick={async () => { if (await onAddTicker(symbol, exchange)) setQuery(""); }}><b>{symbol}</b><span>{symbol}</span><span>{exchange} · TradingView chart symbol</span><span className="suggest-add">+ Add</span></button>; })}{!suggestions.length && <span className="table-empty">No available configured symbol matches.</span>}</div>}

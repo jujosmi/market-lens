@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAccountAuthEnabled, isKestrelPreviewEnabled, isTradingViewWidgetEnabled, resolveApiBaseUrl } from "./releaseFeatures";
+import { isAccountAuthEnabled, isKestrelPreviewEnabled, isTradingViewResearchWidgetsEnabled, isTradingViewWidgetEnabled, resolveApiBaseUrl } from "./releaseFeatures";
 
 describe("release feature gates", () => {
   it("keeps optional account access off unless explicitly enabled", () => {
@@ -13,6 +13,13 @@ describe("release feature gates", () => {
     expect(isTradingViewWidgetEnabled({ DEV: true, VITE_TRADINGVIEW_WIDGET_ENABLED: "false" })).toBe(false);
     expect(isTradingViewWidgetEnabled({ DEV: false })).toBe(false);
     expect(isTradingViewWidgetEnabled({ DEV: false, VITE_TRADINGVIEW_WIDGET_ENABLED: "true" })).toBe(true);
+  });
+
+  it("keeps TradingView research widgets development-friendly but production-disabled without explicit approval", () => {
+    expect(isTradingViewResearchWidgetsEnabled({ DEV: true })).toBe(true);
+    expect(isTradingViewResearchWidgetsEnabled({ DEV: true, VITE_TRADINGVIEW_RESEARCH_WIDGETS_ENABLED: "false" })).toBe(false);
+    expect(isTradingViewResearchWidgetsEnabled({ DEV: false })).toBe(false);
+    expect(isTradingViewResearchWidgetsEnabled({ DEV: false, VITE_TRADINGVIEW_RESEARCH_WIDGETS_ENABLED: "true" })).toBe(true);
   });
 
   it("never falls back to localhost for a production API base", () => {

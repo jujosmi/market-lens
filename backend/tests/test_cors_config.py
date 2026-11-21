@@ -143,8 +143,11 @@ with TestClient(app, base_url=base) as client:
     }})
     assert auth_header_preflight.status_code == 400
 
-methods = {{method.lower() for operations in app.openapi()["paths"].values() for method in operations}}
-assert methods == {{"get"}}, methods
+paths = app.openapi()["paths"]
+methods = {{method.lower() for operations in paths.values() for method in operations}}
+assert methods == {{"get", "post"}}, methods
+post_paths = {{path for path, operations in paths.items() if "post" in operations}}
+assert post_paths == {{"/api/v1/discovery/filings/watchlist"}}, post_paths
 '''
     result = subprocess.run(
         [sys.executable, "-c", script],

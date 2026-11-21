@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 T = TypeVar("T")
 ResponseStatus = Literal["ok", "partial", "unavailable", "rate_limited", "failed", "invalid"]
@@ -126,6 +126,26 @@ class SecDirectoryData(StrictModel):
     disclosure: str
 
 
+class SecIndustryCompany(SecDirectoryCompany):
+    sic: str | None = None
+    sic_description: str | None = None
+    sic_sector: str | None = None
+
+
+class SecIndustryData(StrictModel):
+    companies: list[SecIndustryCompany]
+    total_matches: int = Field(ge=0)
+    total_candidates: int = Field(ge=0)
+    limit: int = Field(ge=1, le=10)
+    offset: int = Field(ge=0)
+    query: str
+    exchange: str | None = None
+    available_exchanges: list[str]
+    classified_count: int = Field(ge=0)
+    unclassified_count: int = Field(ge=0)
+    disclosure: str
+
+
 class SecFilingActivity(StrictModel):
     cik: str = Field(pattern=r"^\d{10}$")
     ticker: str
@@ -140,6 +160,8 @@ class SecFilingActivity(StrictModel):
     primary_document: str | None = None
     filing_url: str | None = None
     items: str | None = None
+    acceptance_datetime: str | None = None
+    primary_doc_description: str | None = None
 
 
 class SecFilingsData(StrictModel):
@@ -151,6 +173,40 @@ class SecFilingsData(StrictModel):
     sic_description: str | None = None
     filings: list[SecFilingActivity]
     forms: list[str]
+    disclosure: str
+
+
+class SecWatchlistActivityCompany(StrictModel):
+    ticker: str = Field(min_length=1, max_length=10, pattern=r"^[A-Za-z][A-Za-z0-9.-]{0,9}$")
+    exchange: str | None = Field(default=None, max_length=40, pattern=r"^[A-Za-z0-9 .&-]*$")
+
+
+class SecWatchlistActivityRequest(StrictModel):
+    companies: list[SecWatchlistActivityCompany] = Field(min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def reject_duplicate_issuers(self):
+        keys = [
+            (company.ticker.strip().upper(), (company.exchange or "").strip().casefold())
+            for company in self.companies
+        ]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Watchlist filing requests cannot repeat a ticker and exchange.")
+        return self
+
+
+class SecWatchlistActivityEntry(StrictModel):
+    requested_ticker: str
+    requested_exchange: str | None = None
+    status: Literal["ok", "partial", "unavailable", "rate_limited", "failed"]
+    data: SecFilingsData | None = None
+    error: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SecWatchlistActivityData(StrictModel):
+    entries: list[SecWatchlistActivityEntry]
+    limit: int
     disclosure: str
 
 

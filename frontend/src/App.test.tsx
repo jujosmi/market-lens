@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -11,6 +11,8 @@ function renderDevelopmentApp() {
 }
 
 afterEach(() => {
+  cleanup();
+  for (const script of Array.from(document.head.querySelectorAll('script[data-tradingview-widget="true"]'))) script.dispatchEvent(new Event("error"));
   window.history.replaceState({}, "", "/");
   window.sessionStorage.clear();
   window.localStorage.clear();
@@ -35,10 +37,10 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     expect(screen.getByText(/Jujosmi does not extract chart data/)).toBeInTheDocument();
     expect(screen.getByText("Market summary")).toBeInTheDocument();
     expect(screen.queryByText("$142.68")).not.toBeInTheDocument();
-    await waitFor(() => expect(document.querySelector("script[src*='embed-widget-advanced-chart.js']")).toBeInTheDocument());
-    const script = document.querySelector("script[src*='embed-widget-advanced-chart.js']");
-    expect(JSON.parse(script?.textContent ?? "{}")).toMatchObject({ symbol: "NASDAQ:NVDA", theme: "dark", allow_symbol_change: true, autosize: true });
-    expect(screen.getByRole("link", { name: "NASDAQ:NVDA chart" })).toHaveAttribute("href", "https://www.tradingview.com/symbols/NASDAQ-NVDA/");
+    await waitFor(() => expect(document.querySelector("tv-advanced-chart")).toHaveAttribute("symbol", "NASDAQ:NVDA"));
+    expect(document.querySelector("tv-advanced-chart")).toHaveAttribute("theme", "dark");
+    expect(document.head.querySelector('script[src="https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js"]')).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open NASDAQ:NVDA chart at TradingView" })).toHaveAttribute("href", "https://www.tradingview.com/symbols/NASDAQ-NVDA/");
   });
 
   it("keeps guest access when Supabase is not configured and never invents a signed-in session", async () => {
@@ -55,8 +57,7 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     render(<App />);
     await user.selectOptions(screen.getByRole("combobox", { name: "Selected chart ticker" }), "JPM");
     await waitFor(() => {
-      const scripts = Array.from(document.querySelectorAll("script[src*='embed-widget-advanced-chart.js']"));
-      expect(scripts.some((script) => JSON.parse(script.textContent ?? "{}").symbol === "NYSE:JPM")).toBe(true);
+      expect(document.querySelector("tv-advanced-chart")).toHaveAttribute("symbol", "NYSE:JPM");
     });
     expect(screen.getByRole("heading", { name: "NYSE:JPM" })).toBeInTheDocument();
   });
@@ -93,6 +94,36 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     await user.click(screen.getByRole("button", { name: "Open Company Research for Apple Inc. (AAPL)" }));
     expect(await screen.findByRole("heading", { name: /Apple Inc\./ })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/companies/AAPL/sec-research?exchange=Nasdaq"))).toBe(true);
+  });
+
+  it("browses only search-scoped SEC SIC classifications and navigates to issuer research", async () => {
+    const directory = { companies: [{ ticker: "AAPL", name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq" }, { ticker: "MSFT", name: "Microsoft Corporation", cik: "0000789019", exchange: "Nasdaq" }], total: 2, limit: 25, offset: 0, query: "company", exchange: null, available_exchanges: ["Nasdaq"], disclosure: "SEC directory." };
+    const industry = { companies: [{ ticker: "AAPL", name: "Apple Inc.", cik: "0000320193", exchange: "Nasdaq", sic: "3571", sic_description: "Electronic Computers", sic_sector: "Manufacturing" }, { ticker: "MSFT", name: "Microsoft Corporation", cik: "0000789019", exchange: "Nasdaq", sic: "7372", sic_description: "Services-Computer Programming Services", sic_sector: "Services" }], total_matches: 2, total_candidates: 2, limit: 10, offset: 0, query: "company", exchange: null, available_exchanges: ["Nasdaq"], classified_count: 2, unclassified_count: 0, disclosure: "Partial SEC SIC coverage; not GICS." };
+    const report = { identity: { cik: "0000789019", ticker: "MSFT", name: "Microsoft Corporation", exchange: "Nasdaq", identity_source: "sec_company_tickers" }, facts: [], filings: [], missing_fields: ["revenue"], source: "SEC EDGAR", live_data: true, status: "partial", as_of: "2026-11-17T12:00:00Z", warnings: [] };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      const payload = url.includes("industry-companies") ? { data: industry, status: "ok", source: "sec-edgar", freshness: "live", warnings: [] }
+        : url.includes("/discovery/companies") ? { data: directory, status: "ok", source: "sec-edgar", freshness: "cached", warnings: [] }
+        : { data: report, status: "partial", source: "sec-edgar", freshness: "cached", warnings: [] };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "Discovery" }));
+    await user.click(await screen.findByRole("tab", { name: "Industry browser" }));
+    await user.type(screen.getByRole("textbox", { name: "Search companies for verified SEC industry classifications" }), "company");
+    await user.click(screen.getByRole("button", { name: "Search SEC industry records" }));
+    expect(await screen.findByText("Electronic Computers · SIC 3571")).toBeInTheDocument();
+    expect(screen.getByText("Services-Computer Programming Services · SIC 7372")).toBeInTheDocument();
+    expect(screen.getByText(/partial, search-scoped coverage/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter verified results by SIC group" }), "Services");
+    expect(screen.queryByText("Electronic Computers · SIC 3571")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Services-Computer Programming Services" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Electronic Computers" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter verified results by SEC SIC industry" }), "Services-Computer Programming Services");
+    await user.click(screen.getByRole("button", { name: "Open Company Research for Microsoft Corporation (MSFT)" }));
+    expect(await screen.findByRole("heading", { name: /Microsoft Corporation/ })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/discovery/industry-companies?q=company"))).toBe(true);
   });
 
   it("loads selected-company filing history with SEC dates and links in public Discovery", async () => {
@@ -136,16 +167,44 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     expect(screen.queryByText(/Analyst expectations/)).not.toBeInTheDocument();
   });
 
-  it("provides company-specific provider-hosted news and technical links instead of empty public tabs", async () => {
+  it("renders symbol-specific provider News and Technical widgets separately from unavailable Jujosmi ratings", async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Company Research" }));
     await user.click(screen.getByRole("tab", { name: "News" }));
+    expect(document.querySelector("tv-news-feed")).toHaveAttribute("symbol", "NASDAQ:NVDA");
+    expect(document.querySelector("tv-news-feed")).toHaveAttribute("feed", "symbol");
     expect(screen.getByRole("link", { name: /Open company news at TradingView/ })).toHaveAttribute("href", "https://www.tradingview.com/symbols/NASDAQ-NVDA/news/");
-    expect(screen.getByText(/does not copy headlines, add sentiment labels/)).toBeInTheDocument();
+    expect(screen.getByText(/TradingView headlines are not copied or classified/)).toBeInTheDocument();
+    expect(screen.getByText("Not available — data source not connected")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Technical" }));
+    expect(document.querySelector("tv-technical-analysis")).toHaveAttribute("symbol", "NASDAQ:NVDA");
     expect(screen.getByRole("link", { name: /Open technical analysis at TradingView/ })).toHaveAttribute("href", "https://www.tradingview.com/symbols/NASDAQ-NVDA/technicals/");
-    expect(screen.getByText(/does not extract indicators/)).toBeInTheDocument();
+    expect(screen.getByText(/TradingView’s separate widget assessment is not used/)).toBeInTheDocument();
+  });
+
+  it("labels Jujosmi news, technical and analyst assessments unavailable until authorized inputs are connected", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Company Research" }));
+    expect(await screen.findByRole("region", { name: "Jujosmi research ratings and source status" })).toBeInTheDocument();
+    expect(screen.getByText("News sentiment")).toBeInTheDocument();
+    expect(screen.getByText("Technical rating")).toBeInTheDocument();
+    expect(screen.getByText("Analyst consensus")).toBeInTheDocument();
+    expect(screen.getAllByText("Not available — data source not connected").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/confidence: \d+%/i)).not.toBeInTheDocument();
+  });
+
+  it("provides provider-hosted earnings and IPO calendar access without presenting invented dates", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Discovery" }));
+    await user.click(await screen.findByRole("tab", { name: "Earnings soon" }));
+    expect(screen.getByRole("link", { name: /Open TradingView earnings calendar/ })).toHaveAttribute("href", "https://www.tradingview.com/earnings-calendar/");
+    expect(screen.getByText(/No approved native scheduled-events source is connected/)).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "IPO calendar" }));
+    expect(screen.getByRole("link", { name: /Open TradingView IPO calendar/ })).toHaveAttribute("href", "https://www.tradingview.com/ipo-calendar/");
+    expect(screen.getByText(/S-1 registration statement is not a confirmed IPO date/)).toBeInTheDocument();
   });
 
   it("does not let a slow previous SEC response replace the newly selected company's research", async () => {
@@ -635,7 +694,7 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
 
     expect(document.querySelector(".sidebar")).toHaveClass("sidebar-collapsed");
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem("jujosmi_trade_ui_preferences_v1") ?? "{}")).toMatchObject({ defaultSymbol: "AAPL", reduceAnimations: true, sidebarCollapsed: true }));
-    await waitFor(() => expect(Array.from(document.querySelectorAll("script[src*='embed-widget-advanced-chart.js']")).some((script) => JSON.parse(script.textContent ?? "{}").symbol === "NASDAQ:AAPL")).toBe(true));
+    await waitFor(() => expect(document.querySelector("tv-advanced-chart")).toHaveAttribute("symbol", "NASDAQ:AAPL"));
 
     await user.click(screen.getAllByRole("button", { name: "Open Preferences" })[1]!);
     expect(screen.getByRole("dialog", { name: "Preferences" })).toBeInTheDocument();
@@ -669,7 +728,7 @@ describe("Jujosmi Trade UI 2.0 prototype", () => {
     expect(screen.getByRole("combobox", { name: "Data mode" })).toHaveValue("public");
     expect(screen.getByRole("heading", { name: "NYSE:JPM" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/market-overview");
-    await waitFor(() => expect(JSON.parse(document.querySelector("script[src*='embed-widget-advanced-chart.js']")?.textContent ?? "{}").symbol).toBe("NYSE:JPM"));
+    await waitFor(() => expect(document.querySelector("tv-advanced-chart")).toHaveAttribute("symbol", "NYSE:JPM"));
   });
 
   it("makes Ctrl+K reach ticker search from another workspace", async () => {
